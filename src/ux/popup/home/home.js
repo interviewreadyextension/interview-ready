@@ -1,9 +1,131 @@
 import {delog, traceMethod} from "../../../shared/logging.js"
-import {getNextPracticeProblem, getReadinessData} from "../../../readiness-logic/classic.js"
+import {getNextPracticeProblem, getReadinessData, recommendedList} from "../../../readiness-logic/classic.js"
 import {getPracticeProblem} from "../../../readiness-logic/practice.js"
 import { randomElementInArray } from "../../../readiness-logic/random.js";
+import { createMessageController } from "./message-controller.js";
+import { targetTopics } from "../../../readiness-logic/target-topics.js";
 
 delog(`Loaded home.js: ${new Date()}`);
+
+const messageController = createMessageController(document);
+
+function buildRecentAcceptedSet(recentAcceptedSubmissions) {
+    const recentAccepted = new Set();
+    const acList = recentAcceptedSubmissions?.data?.recentAcSubmissionList;
+    if (acList?.length > 0) {
+        for (let item of acList) {
+            recentAccepted.add(item.titleSlug);
+        }
+    }
+    return recentAccepted;
+}
+
+async function getTopicAvailability(topic, target) {
+    const allProblems = (await chrome.storage.local.get(["problemsKey"])).problemsKey;
+    const recentAcceptedSubmissions = (await chrome.storage.local.get(["recentSubmissionsKey"])).recentSubmissionsKey;
+    const userHasPremium = (await chrome.storage.local.get(["userDataKey"])).userDataKey?.isPremium;
+
+    const recentAccepted = buildRecentAcceptedSet(recentAcceptedSubmissions);
+
+    const questions = allProblems?.data?.problemsetQuestionList?.questions;
+    if (!questions || questions.length === 0) {
+        return "no-problems";
+    }
+
+    const difficultyFilter = (target === "easy" || target === "medium" || target === "hard")
+        ? (target.charAt(0).toUpperCase() + target.slice(1))
+        : null; // suggested/random => any difficulty
+
+    let totalEligible = 0;
+    let totalUnsolved = 0;
+
+    for (const question of questions) {
+        const relatedToTopic = question.topicTags?.find(t => t.slug == topic);
+        if (!relatedToTopic) continue;
+        if (question.paidOnly && !userHasPremium) continue;
+        if (difficultyFilter && question.difficulty !== difficultyFilter) continue;
+
+        totalEligible++;
+
+        const solved = (question.status == "ac") || recentAccepted.has(question.titleSlug);
+        if (!solved) {
+            totalUnsolved++;
+        }
+    }
+
+    if (totalEligible === 0) {
+        return "no-problems";
+    }
+
+    if (totalUnsolved === 0) {
+        return "no-unsolved";
+    }
+
+    return "unknown";
+}
+
+async function getPracticeAvailability(practiceType) {
+    const allProblems = (await chrome.storage.local.get(["problemsKey"])).problemsKey;
+    const recentAcceptedSubmissions = (await chrome.storage.local.get(["recentSubmissionsKey"])).recentSubmissionsKey;
+    const userHasPremium = (await chrome.storage.local.get(["userDataKey"])).userDataKey?.isPremium;
+
+    const recentAccepted = buildRecentAcceptedSet(recentAcceptedSubmissions);
+    const questions = allProblems?.data?.problemsetQuestionList?.questions;
+    if (!questions || questions.length === 0) {
+        return "no-problems";
+    }
+
+    if (practiceType === "suggested") {
+        const bySlug = new Map();
+        for (const q of questions) {
+            bySlug.set(q.titleSlug, q);
+        }
+
+        let totalEligible = 0;
+        let totalUnsolved = 0;
+
+        for (const slug of recommendedList) {
+            const q = bySlug.get(slug);
+            if (!q) continue;
+            if (q.paidOnly && !userHasPremium) continue;
+
+            totalEligible++;
+
+            const solved = (q.status == "ac") || recentAccepted.has(slug);
+            if (!solved) {
+                totalUnsolved++;
+            }
+        }
+
+        if (totalEligible === 0) return "no-problems";
+        if (totalUnsolved === 0) return "no-unsolved";
+        return "unknown";
+    }
+
+    if (practiceType === "random") {
+        let totalEligible = 0;
+        let totalUnsolved = 0;
+
+        for (const q of questions) {
+            if (q.paidOnly && !userHasPremium) continue;
+            const inTargetTopics = q.topicTags?.some(t => targetTopics.includes(t.slug));
+            if (!inTargetTopics) continue;
+
+            totalEligible++;
+
+            const solved = (q.status == "ac") || recentAccepted.has(q.titleSlug);
+            if (!solved) {
+                totalUnsolved++;
+            }
+        }
+
+        if (totalEligible === 0) return "no-problems";
+        if (totalUnsolved === 0) return "no-unsolved";
+        return "unknown";
+    }
+
+    return "unknown";
+}
 
 //////////// Cold start "sign in to leetcode" experience /////////////
 const signIntoLeetCode = traceMethod(function signIntoLeetCode() {
@@ -187,14 +309,21 @@ function onTopicClick(topic, target) {
     delog(topic);
     chrome.tabs.query({ active: true, currentWindow: true }, async function (tabs) {
         var tab = tabs[0];
-        var nextProblemSlug = await getNextPracticeProblem(topic, target);
-        if (!nextProblemSlug) {
-            delog(`No problem found for topic=${topic} target=${target}`);
-            return;
+        try {
+            var nextProblemSlug = await getNextPracticeProblem(topic, target);
+            if (!nextProblemSlug) {
+                delog(`No problem found for topic=${topic} target=${target}`);
+                const availability = await getTopicAvailability(topic, target);
+                messageController.show("topic-empty", { topic, target, availability });
+                return;
+            }
+            var nextProblemUrl = `https://leetcode.com/problems/${nextProblemSlug}`
+            chrome.tabs.update(tab.id, { url: nextProblemUrl });
+            window.close();
+        } catch (e) {
+            delog(`Error while selecting problem: ${e}`);
+            messageController.showText("Something went wrong while picking a problem. Try refresh.");
         }
-        var nextProblemUrl = `https://leetcode.com/problems/${nextProblemSlug}`
-        chrome.tabs.update(tab.id, { url: nextProblemUrl });
-        window.close();
     });
 }
 
@@ -202,14 +331,24 @@ function onBigPracticeButtonClick(practiceType) {
     delog(practiceType);
     chrome.tabs.query({ active: true, currentWindow: true }, async function (tabs) {
         var tab = tabs[0];
-        var nextProblemSlug = await getPracticeProblem(practiceType);
-        if (!nextProblemSlug) {
-            delog(`No problem found for practiceType=${practiceType}`);
-            return;
+        try {
+            var nextProblemSlug = await getPracticeProblem(practiceType);
+            if (!nextProblemSlug) {
+                delog(`No problem found for practiceType=${practiceType}`);
+                let availability = "unknown";
+                if (practiceType === "suggested" || practiceType === "random") {
+                    availability = await getPracticeAvailability(practiceType);
+                }
+                messageController.show("practice-empty", { practiceType, availability });
+                return;
+            }
+            var nextProblemUrl = `https://leetcode.com/problems/${nextProblemSlug}`
+            chrome.tabs.update(tab.id, { url: nextProblemUrl });
+            window.close();
+        } catch (e) {
+            delog(`Error while selecting practice problem: ${e}`);
+            messageController.showText("Something went wrong while picking a problem. Try refresh.");
         }
-        var nextProblemUrl = `https://leetcode.com/problems/${nextProblemSlug}`
-        chrome.tabs.update(tab.id, { url: nextProblemUrl });
-        window.close();
     });
 }
 /////////////////////////////////////////////////////////////////////////////////

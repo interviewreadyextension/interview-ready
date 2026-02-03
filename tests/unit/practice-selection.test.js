@@ -49,8 +49,6 @@ test("practice:review returns null when nothing accepted", async () => {
 
 test("practice logic must read recent accepts from recentSubmissionsKey (not problemsKey)", async () => {
   // Intended behavior: if a problem is in recent accepted, treat it as accepted.
-  // This test will currently FAIL because practice.js reads recentSubmissionsKey but classic.getNextPracticeProblem has a key bug,
-  // and practice.js itself previously had key wiring issues.
   installChromeStub({
     localData: {
       problemsKey: makeAllProblems([

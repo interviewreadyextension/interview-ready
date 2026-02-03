@@ -11,6 +11,5 @@ test("randomElementInArray returns an element from the array", () => {
 
 test("randomElementInArray returns null for empty arrays (intended robustness)", () => {
   // Intended behavior: callers should never navigate to /problems/undefined.
-  // This will currently FAIL because random.js returns undefined.
   assert.equal(randomElementInArray([]), null);
 });

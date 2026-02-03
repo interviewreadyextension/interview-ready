@@ -7,7 +7,6 @@ import { installChromeStub, uninstallChromeStub, makeAllProblems, q } from "./_h
 
 test("getNextPracticeProblem excludes problems in recent accepted submissions", async () => {
   // Intended behavior: anything in recentAcSubmissionList counts as accepted.
-  // This will currently FAIL because classic.js reads recentSubmissionsKey from `.problemsKey`.
   const restoreRandom = Math.random;
   Math.random = () => 0;
 

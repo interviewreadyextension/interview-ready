@@ -6,7 +6,6 @@ const manifestPath = new URL("../../src/manifest.json", import.meta.url);
 
 test("manifest declares tabs permission (popup uses chrome.tabs.*)", async () => {
   // Intended behavior: popup can open/login and navigate the current tab.
-  // This will currently FAIL because manifest.json only has "storage".
   const raw = await fs.readFile(manifestPath, "utf8");
   const manifest = JSON.parse(raw);
 

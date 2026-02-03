@@ -51,7 +51,6 @@ test("getReadinessData readiness thresholds: >=100% ready, >70% almost", () => {
 test("getReadinessData Medium scoring weights by acceptance-rate band (easier < target < harder)", () => {
   // This is *weighting*, not exclusion: you can accept any Medium, but lower acRate
   // should contribute more readiness points.
-  // This test will currently FAIL because classic.js has an impossible conditional.
 
   const scoreFor = (acRate) => {
     const allProblems = makeAllProblems([
