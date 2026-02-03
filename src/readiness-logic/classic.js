@@ -43,7 +43,7 @@ export const getReadinessData = traceMethod(function getReadinessData(allProblem
         points = .75;
       } else if (question.difficulty == 'Medium' &&
         question.acRate < READINESS_TARGET_UPPER_AC_RATE &&
-        question.acRate > READINESS_TARGET_UPPER_AC_RATE) {
+        question.acRate > READINESS_TARGET_LOWER_AC_RATE) {
         points = 1;
       } else if (question.difficulty == 'Medium') {
         points = 1.5;
@@ -99,7 +99,7 @@ export const getReadinessData = traceMethod(function getReadinessData(allProblem
  */
 export async function getNextPracticeProblem(topic, target) {
   const allProblems = (await chrome.storage.local.get(["problemsKey"])).problemsKey;
-  const recentAccepted = getAcceptedSet((await chrome.storage.local.get(["recentSubmissionsKey"])).problemsKey);
+  const recentAccepted = getAcceptedSet((await chrome.storage.local.get(["recentSubmissionsKey"])).recentSubmissionsKey);
   const userHasPremium = (await chrome.storage.local.get(["userDataKey"])).userDataKey.isPremium;
   const unsolvedProblemsMediumMoreDifficultThanTarget = []
   const unsolvedProblemsMediumAtTarget = [];
@@ -162,6 +162,7 @@ export async function getNextPracticeProblem(topic, target) {
     return unsolvedProblems.length > 0 ? randomElementInArray(unsolvedProblems) : randomElementInArray(solvedProblems);
   }
 
+  // Default "suggested" mode: progressive difficulty recommendation
   const numberOfEasyProblemsFirst = Math.min(10, unsolvedProblemsEasy.length);
   const numberOfBeforeTargetFirst = Math.min(15, unsolvedProblemsEasy.length + unsolvedProblemsMediumEasierThanTarget.length);
 
@@ -181,9 +182,9 @@ export async function getNextPracticeProblem(topic, target) {
     return preferredElementInArray(unsolvedProblemsHard);
   } else if (unsolvedProblemsEasy.length > 0) {
     return preferredElementInArray(unsolvedProblemsEasy);
-  } else {
-    return preferredElementInArray(solvedProblems);
   }
+
+  return preferredElementInArray(solvedProblems);
 };
 
 

@@ -1,4 +1,18 @@
-const isDebug = !('update_url' in chrome.runtime.getManifest());
+const isDebug = (() => {
+    try {
+        if (typeof chrome === "undefined") {
+            return false;
+        }
+
+        if (!chrome?.runtime?.getManifest) {
+            return false;
+        }
+
+        return !("update_url" in chrome.runtime.getManifest());
+    } catch {
+        return false;
+    }
+})();
 
 export function delog(message) {
     if(isDebug) {

@@ -188,6 +188,10 @@ function onTopicClick(topic, target) {
     chrome.tabs.query({ active: true, currentWindow: true }, async function (tabs) {
         var tab = tabs[0];
         var nextProblemSlug = await getNextPracticeProblem(topic, target);
+        if (!nextProblemSlug) {
+            delog(`No problem found for topic=${topic} target=${target}`);
+            return;
+        }
         var nextProblemUrl = `https://leetcode.com/problems/${nextProblemSlug}`
         chrome.tabs.update(tab.id, { url: nextProblemUrl });
         window.close();
@@ -199,6 +203,10 @@ function onBigPracticeButtonClick(practiceType) {
     chrome.tabs.query({ active: true, currentWindow: true }, async function (tabs) {
         var tab = tabs[0];
         var nextProblemSlug = await getPracticeProblem(practiceType);
+        if (!nextProblemSlug) {
+            delog(`No problem found for practiceType=${practiceType}`);
+            return;
+        }
         var nextProblemUrl = `https://leetcode.com/problems/${nextProblemSlug}`
         chrome.tabs.update(tab.id, { url: nextProblemUrl });
         window.close();

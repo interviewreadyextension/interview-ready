@@ -38,7 +38,7 @@ const getStoragePromise = (key) => {
 }
 
 const setStoragePromise = (key, value) => {
-    return chrome.storage.local.set({key: value});
+  return chrome.storage.local.set({[key]: value});
 }
 
 const userDataKey = "userDataKey";
@@ -66,7 +66,14 @@ async function queryData(queryBody) {
 }
 
 async function updateRecentAcceptedSubmissions() {
-  const result = await queryData(JSON.stringify({"query":"\n    query recentAcSubmissions($username: String!, $limit: Int!) {\n  recentAcSubmissionList(username: $username, limit: $limit) {\n    id\n    title\n    titleSlug\n    timestamp\n  }\n}\n    ","variables":{"username":"michael187","limit":15},"operationName":"recentAcSubmissions"}));
+  const userData = (await chrome.storage.local.get([userDataKey])).userDataKey;
+  const username = userData?.username;
+  if (!username) {
+    delog("No username available; skipping recent accepts update.");
+    return;
+  }
+
+  const result = await queryData(JSON.stringify({"query":"\n    query recentAcSubmissions($username: String!, $limit: Int!) {\n  recentAcSubmissionList(username: $username, limit: $limit) {\n    id\n    title\n    titleSlug\n    timestamp\n  }\n}\n    ","variables":{"username":username,"limit":15},"operationName":"recentAcSubmissions"}));
   let stringValue = JSON.stringify(result);
   const oldValue = (await chrome.storage.local.get([recentSubmissionsKey])).recentSubmissionsKey;
   delog("Comparing string values");
