@@ -2,130 +2,9 @@ import {delog, traceMethod} from "../../../shared/logging.js"
 import {getNextPracticeProblem, getReadinessData, recommendedList} from "../../../readiness-logic/classic.js"
 import {getPracticeProblem} from "../../../readiness-logic/practice.js"
 import { randomElementInArray } from "../../../readiness-logic/random.js";
-import { createMessageController } from "./message-controller.js";
 import { targetTopics } from "../../../readiness-logic/target-topics.js";
 
 delog(`Loaded home.js: ${new Date()}`);
-
-const messageController = createMessageController(document);
-
-function buildRecentAcceptedSet(recentAcceptedSubmissions) {
-    const recentAccepted = new Set();
-    const acList = recentAcceptedSubmissions?.data?.recentAcSubmissionList;
-    if (acList?.length > 0) {
-        for (let item of acList) {
-            recentAccepted.add(item.titleSlug);
-        }
-    }
-    return recentAccepted;
-}
-
-async function getTopicAvailability(topic, target) {
-    const allProblems = (await chrome.storage.local.get(["problemsKey"])).problemsKey;
-    const recentAcceptedSubmissions = (await chrome.storage.local.get(["recentSubmissionsKey"])).recentSubmissionsKey;
-    const userHasPremium = (await chrome.storage.local.get(["userDataKey"])).userDataKey?.isPremium;
-
-    const recentAccepted = buildRecentAcceptedSet(recentAcceptedSubmissions);
-
-    const questions = allProblems?.data?.problemsetQuestionList?.questions;
-    if (!questions || questions.length === 0) {
-        return "no-problems";
-    }
-
-    const difficultyFilter = (target === "easy" || target === "medium" || target === "hard")
-        ? (target.charAt(0).toUpperCase() + target.slice(1))
-        : null; // suggested/random => any difficulty
-
-    let totalEligible = 0;
-    let totalUnsolved = 0;
-
-    for (const question of questions) {
-        const relatedToTopic = question.topicTags?.find(t => t.slug == topic);
-        if (!relatedToTopic) continue;
-        if (question.paidOnly && !userHasPremium) continue;
-        if (difficultyFilter && question.difficulty !== difficultyFilter) continue;
-
-        totalEligible++;
-
-        const solved = (question.status == "ac") || recentAccepted.has(question.titleSlug);
-        if (!solved) {
-            totalUnsolved++;
-        }
-    }
-
-    if (totalEligible === 0) {
-        return "no-problems";
-    }
-
-    if (totalUnsolved === 0) {
-        return "no-unsolved";
-    }
-
-    return "unknown";
-}
-
-async function getPracticeAvailability(practiceType) {
-    const allProblems = (await chrome.storage.local.get(["problemsKey"])).problemsKey;
-    const recentAcceptedSubmissions = (await chrome.storage.local.get(["recentSubmissionsKey"])).recentSubmissionsKey;
-    const userHasPremium = (await chrome.storage.local.get(["userDataKey"])).userDataKey?.isPremium;
-
-    const recentAccepted = buildRecentAcceptedSet(recentAcceptedSubmissions);
-    const questions = allProblems?.data?.problemsetQuestionList?.questions;
-    if (!questions || questions.length === 0) {
-        return "no-problems";
-    }
-
-    if (practiceType === "suggested") {
-        const bySlug = new Map();
-        for (const q of questions) {
-            bySlug.set(q.titleSlug, q);
-        }
-
-        let totalEligible = 0;
-        let totalUnsolved = 0;
-
-        for (const slug of recommendedList) {
-            const q = bySlug.get(slug);
-            if (!q) continue;
-            if (q.paidOnly && !userHasPremium) continue;
-
-            totalEligible++;
-
-            const solved = (q.status == "ac") || recentAccepted.has(slug);
-            if (!solved) {
-                totalUnsolved++;
-            }
-        }
-
-        if (totalEligible === 0) return "no-problems";
-        if (totalUnsolved === 0) return "no-unsolved";
-        return "unknown";
-    }
-
-    if (practiceType === "random") {
-        let totalEligible = 0;
-        let totalUnsolved = 0;
-
-        for (const q of questions) {
-            if (q.paidOnly && !userHasPremium) continue;
-            const inTargetTopics = q.topicTags?.some(t => targetTopics.includes(t.slug));
-            if (!inTargetTopics) continue;
-
-            totalEligible++;
-
-            const solved = (q.status == "ac") || recentAccepted.has(q.titleSlug);
-            if (!solved) {
-                totalUnsolved++;
-            }
-        }
-
-        if (totalEligible === 0) return "no-problems";
-        if (totalUnsolved === 0) return "no-unsolved";
-        return "unknown";
-    }
-
-    return "unknown";
-}
 
 //////////// Cold start "sign in to leetcode" experience /////////////
 const signIntoLeetCode = traceMethod(function signIntoLeetCode() {
@@ -167,15 +46,133 @@ function showHideById(id, shouldHide) {
 }
 ///////////////////////////////////////////////////////////////////////
 
+//////////// Availability checking ///////////////
+function buildRecentAcceptedSet(recentAcceptedSubmissions) {
+    const recentAccepted = new Set();
+    const acList = recentAcceptedSubmissions?.data?.recentAcSubmissionList;
+    if (acList?.length > 0) {
+        for (let item of acList) {
+            recentAccepted.add(item.titleSlug);
+        }
+    }
+    return recentAccepted;
+}
 
+async function computeTopicAvailability() {
+    const allProblems = (await chrome.storage.local.get(["problemsKey"])).problemsKey;
+    const recentAcceptedSubmissions = (await chrome.storage.local.get(["recentSubmissionsKey"])).recentSubmissionsKey;
+    const userHasPremium = (await chrome.storage.local.get(["userDataKey"])).userDataKey?.isPremium;
+
+    const recentAccepted = buildRecentAcceptedSet(recentAcceptedSubmissions);
+    const questions = allProblems?.data?.problemsetQuestionList?.questions;
+
+    const availability = {};
+    
+    for (const topic of targetTopics) {
+        availability[topic] = {
+            suggested: { total: 0, unsolved: 0 },
+            easy: { total: 0, unsolved: 0 },
+            medium: { total: 0, unsolved: 0 },
+            hard: { total: 0, unsolved: 0 },
+            random: { total: 0, unsolved: 0 },
+        };
+    }
+
+    if (!questions) return availability;
+
+    for (const q of questions) {
+        if (q.paidOnly && !userHasPremium) continue;
+
+        const solved = (q.status == "ac") || recentAccepted.has(q.titleSlug);
+
+        for (const tag of (q.topicTags || [])) {
+            const topic = tag.slug;
+            if (!availability[topic]) continue;
+
+            // Track by difficulty
+            const diff = q.difficulty?.toLowerCase();
+            if (diff === "easy" || diff === "medium" || diff === "hard") {
+                availability[topic][diff].total++;
+                if (!solved) availability[topic][diff].unsolved++;
+            }
+
+            // Track for suggested/random (any difficulty)
+            availability[topic].suggested.total++;
+            if (!solved) availability[topic].suggested.unsolved++;
+            
+            availability[topic].random.total++;
+            if (!solved) availability[topic].random.unsolved++;
+        }
+    }
+
+    return availability;
+}
+
+async function computeBigButtonStates() {
+    const allProblems = (await chrome.storage.local.get(["problemsKey"])).problemsKey;
+    const recentAcceptedSubmissions = (await chrome.storage.local.get(["recentSubmissionsKey"])).recentSubmissionsKey;
+    const userHasPremium = (await chrome.storage.local.get(["userDataKey"])).userDataKey?.isPremium;
+
+    const recentAccepted = buildRecentAcceptedSet(recentAcceptedSubmissions);
+    const questions = allProblems?.data?.problemsetQuestionList?.questions;
+
+    const states = {
+        suggested: { hasUnsolved: false, label: "Next Suggested Problem" },
+        review: { enabled: false, label: "Review Random Completed" },
+        random: { hasUnsolved: true, label: "Solve Random Problem" },
+    };
+
+    if (!questions) return states;
+
+    // Check suggested list
+    const bySlug = new Map();
+    for (const q of questions) {
+        bySlug.set(q.titleSlug, q);
+    }
+
+    let suggestedUnsolved = false;
+    for (const slug of recommendedList) {
+        const q = bySlug.get(slug);
+        if (!q) continue;
+        if (q.paidOnly && !userHasPremium) continue;
+
+        const solved = (q.status == "ac") || recentAccepted.has(slug);
+        if (!solved) {
+            suggestedUnsolved = true;
+            break;
+        }
+    }
+
+    states.suggested.hasUnsolved = suggestedUnsolved;
+    if (!suggestedUnsolved) {
+        states.suggested.label = "Solve Random Problem";
+    }
+
+    // Check review (any completed problems)
+    let hasCompleted = false;
+    for (const q of questions) {
+        if (q.paidOnly && !userHasPremium) continue;
+        const inTargetTopics = q.topicTags?.some(t => targetTopics.includes(t.slug));
+        if (!inTargetTopics) continue;
+
+        const solved = (q.status == "ac") || recentAccepted.has(q.titleSlug);
+        if (solved) {
+            hasCompleted = true;
+            break;
+        }
+    }
+
+    states.review.enabled = hasCompleted;
+
+    return states;
+}
+///////////////////////////////////////////////////////////////////////
 
 
 ///////////////// Render ///////////////
-//setInterval(render, 1000);
 render();
 
 async function render() {
-
     delog("################");
     delog("render!!!");
     let userData = (await chrome.storage.local.get(["userDataKey"])).userDataKey;
@@ -197,13 +194,9 @@ async function render() {
 
     let allProblemsData = (await chrome.storage.local.get(["problemsKey"])).problemsKey;
     let recentAcceptedSubmissions = (await chrome.storage.local.get(["recentSubmissionsKey"])).recentSubmissionsKey;
-    let topicData = getReadinessData(allProblemsData, recentAcceptedSubmissions);
+    
     var readiness = document.getElementById("currentReadiness");
-
     readiness.innerHTML = '';
-    readiness.innerHTML = '<button class=\'clickable bigpractice\' practice-type=\'suggested\'>Next Suggested Problem</button>';
-    readiness.innerHTML += '<button id=\'legend-button\' class=\'clickable\'>?</button><button id=\'refresh-button\' class=\'clickable\'>↺</button>';
-
 
     if(!allProblemsData) {
         showProgress();
@@ -212,18 +205,49 @@ async function render() {
     }
 
     hideProgress();
+
+    // Compute availability before rendering
+    const availability = await computeTopicAvailability();
+    const bigButtonStates = await computeBigButtonStates();
     
+    let topicData = getReadinessData(allProblemsData, recentAcceptedSubmissions);
+
+    // Render big buttons
+    readiness.innerHTML = `<button class='clickable bigpractice' practice-type='suggested'>${bigButtonStates.suggested.label}</button>`;
+    readiness.innerHTML += '<button id=\'legend-button\' class=\'clickable\'>?</button><button id=\'refresh-button\' class=\'clickable\'>↺</button>';
+
     var sortedTopicProficiency = Object.entries(topicData).sort((a, b) => {
         return b[1][1] - a[1][1];
     });
 
-    var readinessHtmlFunc = (styleClass, text, topic) => {
+    var readinessHtmlFunc = (styleClass, text, topic, avail) => {
+        // Only render if topic has ANY problems
+        if (avail.suggested.total === 0) {
+            return "";
+        }
+
+        const makeButton = (difficulty) => {
+            const a = avail[difficulty];
+            if (a.total === 0) {
+                return `<button class="clickable practice practice-${difficulty} disabled" difficulty='${difficulty}' data-topic='${topic}' disabled title="No ${difficulty} problems for this topic">🡕</button>`;
+            }
+            
+            // Build tooltip: show unsolved count, only show completed if > 0
+            const completed = a.total - a.unsolved;
+            let tooltip = `${a.unsolved} unsolved`;
+            if (completed > 0) {
+                tooltip += `, ${completed} completed`;
+            }
+            
+            return `<button class="clickable practice practice-${difficulty}" difficulty='${difficulty}' data-topic='${topic}' title="${tooltip}">🡕</button>`;
+        };
+
         return `<div class="topicStatus">
-        <button class="clickable practice practice-suggested" difficulty='suggested' data-topic='${topic}'>🡕</button>
-        <button class="clickable practice practice-easy" difficulty='easy' data-topic='${topic}'>🡕</button>
-        <button class="clickable practice practice-medium" difficulty='medium' data-topic='${topic}'>🡕</button>
-        <button class="clickable practice practice-hard" difficulty='hard' data-topic='${topic}'>🡕</button>
-        <button class="clickable practice practice-random" difficulty='random' data-topic='${topic}'>🡕</button>
+        ${makeButton("suggested")}
+        ${makeButton("easy")}
+        ${makeButton("medium")}
+        ${makeButton("hard")}
+        ${makeButton("random")}
         <button difficulty='suggested' data-topic='${topic}' class='clickable practice ${styleClass}'>${topic} - ${text}</button>
         <div class="suggested tooltip practice-suggested">suggested</div>
         <div class="easy tooltip practice-easy">easy</div>
@@ -233,28 +257,25 @@ async function render() {
         </div>`;
     };
 
-    var addReadiness = (styleClass, text, topic) => readiness.innerHTML += readinessHtmlFunc(styleClass, text, topic);
-    var randomTone = () => randomElementInArray(["&#127995;","&#127996;","&#127997;","&#127998;","&#127999;"]);
-    var sumOfReadiness = 0;
     sortedTopicProficiency.forEach(element => {
         var topic = element[0];
         var readinessPercent = element[1][1];
-        sumOfReadiness += readinessPercent;
         var designation = element[1][0];
         var readinessScoreFormattedAsPercent = '%' + readinessPercent.toFixed();
         if (designation == "ready") {
-            readinessScoreFormattedAsPercent = `Ready ${readinessScoreFormattedAsPercent}`; // += " &#128077;" + randomTone(); // 👍
-        } else {
-            //readinessScoreFormattedAsPercent += " &#x1F448;" + randomTone(); // 👈
+            readinessScoreFormattedAsPercent = `Ready ${readinessScoreFormattedAsPercent}`;
         }
-        //addReadiness(designation, designation == "ready" ? "Ready": readinessScoreFormattedAsPercent, topic);
-        addReadiness(designation, readinessScoreFormattedAsPercent, topic);
+        
+        const html = readinessHtmlFunc(designation, readinessScoreFormattedAsPercent, topic, availability[topic]);
+        readiness.innerHTML += html;
     });
 
     
-    if(sumOfReadiness) {
-        readiness.innerHTML += '<button class=\'clickable bigpractice\' practice-type=\'review\'>Review Random Completed</button>';
-    } 
+    if(bigButtonStates.review.enabled) {
+        readiness.innerHTML += `<button class='clickable bigpractice' practice-type='review'>${bigButtonStates.review.label}</button>`;
+    } else {
+        readiness.innerHTML += `<button class='clickable bigpractice disabled' practice-type='review' disabled title="No completed problems yet">${bigButtonStates.review.label}</button>`;
+    }
 
     readiness.innerHTML += '<button class=\'clickable bigpractice\' practice-type=\'random\'>Solve Random Problem</button>';
 
@@ -263,6 +284,7 @@ async function render() {
     var items = document.getElementsByClassName("practice");
     for (var i = 0; i < items.length; i++) {
         let button = items[i];
+        if (button.disabled) continue; // Don't attach handler to disabled buttons
         button.addEventListener("click", function () {
             onTopicClick(button.getAttribute("data-topic"), button.getAttribute("difficulty"));
         });
@@ -271,6 +293,7 @@ async function render() {
     var items = document.getElementsByClassName("bigpractice");
     for (var i = 0; i < items.length; i++) {
         let button = items[i];
+        if (button.disabled) continue;
         button.addEventListener("click", function () {
             onBigPracticeButtonClick(button.getAttribute("practice-type"));
         });
@@ -312,9 +335,17 @@ function onTopicClick(topic, target) {
         try {
             var nextProblemSlug = await getNextPracticeProblem(topic, target);
             if (!nextProblemSlug) {
-                delog(`No problem found for topic=${topic} target=${target}`);
-                const availability = await getTopicAvailability(topic, target);
-                messageController.show("topic-empty", { topic, target, availability });
+                delog(`No unsolved problem found for topic=${topic} target=${target}. Trying to pick from solved...`);
+                // Fallback: pick from solved problems
+                const fallbackSlug = await pickFromSolved(topic, target);
+                if (fallbackSlug) {
+                    delog(`Picked solved problem: ${fallbackSlug}`);
+                    var fallbackUrl = `https://leetcode.com/problems/${fallbackSlug}`;
+                    chrome.tabs.update(tab.id, { url: fallbackUrl });
+                    window.close();
+                    return;
+                }
+                delog(`No problems at all for topic=${topic} target=${target}`);
                 return;
             }
             var nextProblemUrl = `https://leetcode.com/problems/${nextProblemSlug}`
@@ -322,7 +353,7 @@ function onTopicClick(topic, target) {
             window.close();
         } catch (e) {
             delog(`Error while selecting problem: ${e}`);
-            messageController.showText("Something went wrong while picking a problem. Try refresh.");
+            console.error("Error in onTopicClick:", e);
         }
     });
 }
@@ -335,11 +366,6 @@ function onBigPracticeButtonClick(practiceType) {
             var nextProblemSlug = await getPracticeProblem(practiceType);
             if (!nextProblemSlug) {
                 delog(`No problem found for practiceType=${practiceType}`);
-                let availability = "unknown";
-                if (practiceType === "suggested" || practiceType === "random") {
-                    availability = await getPracticeAvailability(practiceType);
-                }
-                messageController.show("practice-empty", { practiceType, availability });
                 return;
             }
             var nextProblemUrl = `https://leetcode.com/problems/${nextProblemSlug}`
@@ -347,9 +373,39 @@ function onBigPracticeButtonClick(practiceType) {
             window.close();
         } catch (e) {
             delog(`Error while selecting practice problem: ${e}`);
-            messageController.showText("Something went wrong while picking a problem. Try refresh.");
+            console.error("Error in onBigPracticeButtonClick:", e);
         }
     });
+}
+
+async function pickFromSolved(topic, target) {
+    const allProblems = (await chrome.storage.local.get(["problemsKey"])).problemsKey;
+    const recentAcceptedSubmissions = (await chrome.storage.local.get(["recentSubmissionsKey"])).recentSubmissionsKey;
+    const userHasPremium = (await chrome.storage.local.get(["userDataKey"])).userDataKey?.isPremium;
+
+    const recentAccepted = buildRecentAcceptedSet(recentAcceptedSubmissions);
+    const questions = allProblems?.data?.problemsetQuestionList?.questions;
+    if (!questions) return null;
+
+    const difficultyFilter = (target === "easy" || target === "medium" || target === "hard")
+        ? (target.charAt(0).toUpperCase() + target.slice(1))
+        : null;
+
+    const solvedProblems = [];
+
+    for (const q of questions) {
+        const relatedToTopic = q.topicTags?.find(t => t.slug == topic);
+        if (!relatedToTopic) continue;
+        if (q.paidOnly && !userHasPremium) continue;
+        if (difficultyFilter && q.difficulty !== difficultyFilter) continue;
+
+        const solved = (q.status == "ac") || recentAccepted.has(q.titleSlug);
+        if (solved) {
+            solvedProblems.push(q.titleSlug);
+        }
+    }
+
+    return randomElementInArray(solvedProblems);
 }
 /////////////////////////////////////////////////////////////////////////////////
 
