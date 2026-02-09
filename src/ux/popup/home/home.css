@@ -56,6 +56,24 @@ button {
     text-decoration: none;
 }
 
+.debug-panel {
+    margin-top: 12px;
+    padding: 6px;
+    border: 1px dashed #999;
+    background: #f7f7f7;
+    font-size: 12px;
+}
+
+.debug-panel summary {
+    cursor: pointer;
+    font-weight: bold;
+}
+
+#debug-content {
+    white-space: pre-wrap;
+    font-family: 'Courier New', Courier, monospace;
+}
+
 
 
 .homecontainer {

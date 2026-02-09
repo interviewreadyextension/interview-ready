@@ -16,7 +16,8 @@
       "tabs"
     ],
     "host_permissions": [
-      "https://leetcode.com/*"
+      "https://leetcode.com/*",
+      "https://raw.githubusercontent.com/*"
     ],
     "action": {
       "default_popup": "/ux/popup/home/home.html",

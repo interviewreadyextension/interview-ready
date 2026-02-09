@@ -1,53 +1,4 @@
-/*
-  content-script.js (see README.md)
-*/
-
-////////////// COPY OF LOGGING.JS //////////////////////////
-
-const isDebug = !('update_url' in chrome.runtime.getManifest());
-
-function delog(message) {
-    if(isDebug) {
-        console.log(message);
-    }
-}
-
-function traceMethod(func) {
-    function updatedFunc(...args) {
-        delog("######################")
-        delog("")
-        delog("Calling Function>>>>>>")
-        delog(func.name)
-        for(const arg of args) {
-            delog(arg)
-        }
-        result = func.apply(this, args)
-        delog("Function Returns<<<<")
-        delog(result)
-        delog("")
-        delog("#####################")
-    }
-
-    return updatedFunc
-}
-
-////////////////// COPY OF data-storage.js ////////////////////////
-
-const getStoragePromise = (key) => {
-    return chrome.storage.local.get([key]);
-}
-
-const setStoragePromise = (key, value) => {
-  return chrome.storage.local.set({[key]: value});
-}
-
-const userDataKey = "userDataKey";
-const problemsKey = "problemsKey";
-const recentSubmissionsKey = "recentSubmissionsKey";
-
-/////////////////////////// END COPIES ///////////////////////////
-
-////////////// COPY OF sync-logic.js //////////////////////////
+import { delog } from "./logging.js";
 
 const DEFAULT_PROBLEMS_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_SUBMISSION_LIMIT = 20;
@@ -80,7 +31,7 @@ function normalizeAcceptedSubmission(submission) {
   };
 }
 
-function validateChronologicalOrder(submissions, label = "submissions") {
+export function validateChronologicalOrder(submissions, label = "submissions") {
   if (!Array.isArray(submissions)) {
     throw new Error(`Expected ${label} to be an array`);
   }
@@ -97,10 +48,6 @@ function validateChronologicalOrder(submissions, label = "submissions") {
   }
 }
 
-
-/**
- * Query data from leetcode apis
- */
 async function queryData(queryBody) {
   const response = await fetch("https://leetcode.com/graphql/", {
     headers: {
@@ -109,19 +56,31 @@ async function queryData(queryBody) {
     body: queryBody,
     method: "POST",
   });
-  delog("querying");
 
   if (!response.ok) {
     throw new Error(`GraphQL request failed: ${response.status} ${response.statusText}`);
   }
 
-  return await response.json();
+  return response.json();
 }
 
 async function fetchSubmissionListPage({ offset, limit, lastKey }) {
   const query = JSON.stringify({
     operationName: "submissionList",
-    query: `query submissionList($offset: Int!, $limit: Int!, $lastKey: String) {\n  questionSubmissionList(offset: $offset, limit: $limit, lastKey: $lastKey) {\n    lastKey\n    hasNext\n    submissions {\n      id\n      title\n      titleSlug\n      status\n      statusDisplay\n      timestamp\n    }\n  }\n}`,
+    query: `query submissionList($offset: Int!, $limit: Int!, $lastKey: String) {
+  questionSubmissionList(offset: $offset, limit: $limit, lastKey: $lastKey) {
+    lastKey
+    hasNext
+    submissions {
+      id
+      title
+      titleSlug
+      status
+      statusDisplay
+      timestamp
+    }
+  }
+}`,
     variables: {
       offset,
       limit,
@@ -138,7 +97,7 @@ async function fetchSubmissionListPage({ offset, limit, lastKey }) {
   return list;
 }
 
-async function fetchAllAcceptedSubmissions({ limit = DEFAULT_SUBMISSION_LIMIT } = {}) {
+export async function fetchAllAcceptedSubmissions({ limit = DEFAULT_SUBMISSION_LIMIT } = {}) {
   const accepted = [];
   let lastKey = null;
   let offset = 0;
@@ -168,7 +127,7 @@ async function fetchAllAcceptedSubmissions({ limit = DEFAULT_SUBMISSION_LIMIT } 
   return accepted;
 }
 
-async function fetchUntilSeen({ lastKnownTimestamp, limit = DEFAULT_SUBMISSION_LIMIT } = {}) {
+export async function fetchUntilSeen({ lastKnownTimestamp, limit = DEFAULT_SUBMISSION_LIMIT } = {}) {
   if (!lastKnownTimestamp) {
     throw new Error("Missing last known timestamp for incremental sync");
   }
@@ -209,7 +168,7 @@ async function fetchUntilSeen({ lastKnownTimestamp, limit = DEFAULT_SUBMISSION_L
   return { accepted, seenKnown };
 }
 
-async function updateProblems({
+export async function updateProblems({
   githubRawUrl,
   problemsKey = "problemsKey",
   fetchTtlMs = DEFAULT_PROBLEMS_TTL_MS,
@@ -293,7 +252,7 @@ function mergeAcceptedSubmissions(newList, existingList) {
   return merged;
 }
 
-async function updateSubmissions({
+export async function updateSubmissions({
   username,
   recentSubmissionsKey = "recentSubmissionsKey",
 } = {}) {
@@ -382,53 +341,29 @@ async function updateSubmissions({
   }
 }
 
-//////////////////// END COPY OF sync-logic.js //////////////////////
+export async function fetchRecentAcceptedSubmissions({ username, limit = 50 } = {}) {
+  if (!username) {
+    throw new Error("Missing username for recent accepts query");
+  }
 
-const PROBLEMS_GITHUB_URL =
-  "https://raw.githubusercontent.com/vviseguy/interview-ready-byu/main/data/problems.json";
-
-
-async function updateUserStatus() {
   const query = JSON.stringify({
-    operationName: "globalData",
-    query: "query globalData {userStatus {isSignedIn isPremium username realName avatar}}",
-    variables: {}
+    operationName: "recentAcSubmissions",
+    query: `query recentAcSubmissions($username: String!, $limit: Int!) {
+  recentAcSubmissionList(username: $username, limit: $limit) {
+    id
+    title
+    titleSlug
+    timestamp
+  }
+}`,
+    variables: { username, limit },
   });
+
   const result = await queryData(query);
-  chrome.storage.local.set({userDataKey: result.data.userStatus});
-  delog("Setting...." + userDataKey);
-  delog(result);
-  delog(".....");
-  if(!result.data.userStatus.isSignedIn) {
-    delog("not signed in will run again if some tab signs in");
-  } else {
-    updateProblems({ githubRawUrl: PROBLEMS_GITHUB_URL });
-    updateSubmissions({ username: result.data.userStatus.username });
+  const list = result?.data?.recentAcSubmissionList;
+  if (!Array.isArray(list)) {
+    throw new Error("Unexpected recent accepts response from LeetCode");
   }
+
+  return list.map(normalizeAcceptedSubmission);
 }
-
-/**
- * Refresh data when leetcode is opened on any tab:
- */
-updateUserStatus();
-
-function changeListener(changes, namespace) {
-  for (let [key, {oldValue, newValue}] of Object.entries(changes)) {
-    delog(`CHANGE ${key}`);
-    if(key == "refresh_problems" && oldValue != newValue) {
-      delog(oldValue);
-      delog(newValue);
-      updateProblems({ githubRawUrl: PROBLEMS_GITHUB_URL });
-    }
-    else if(key == "modal_opened" && oldValue != newValue) {
-      delog(oldValue);
-      delog(newValue);
-      chrome.storage.local.get([userDataKey]).then(({ userDataKey: userData }) => {
-        updateSubmissions({ username: userData?.username });
-      });
-    }
-  }
-}
-
-chrome.storage.onChanged.addListener(changeListener);
-

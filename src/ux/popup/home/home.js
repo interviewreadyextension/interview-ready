@@ -44,6 +44,56 @@ function hideLegend() {
 function showHideById(id, shouldHide) {
     document.getElementById(id).hidden = shouldHide;
 }
+
+function formatTimestampMs(value) {
+    if (!value) return "n/a";
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return String(value);
+    return new Date(numeric).toLocaleString();
+}
+
+function formatTimestampSeconds(value) {
+    if (!value) return "n/a";
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return String(value);
+    return new Date(numeric * 1000).toLocaleString();
+}
+
+function renderDebugPanel({ userData, problems, submissions }) {
+    const panel = document.getElementById("debug-panel");
+    const content = document.getElementById("debug-content");
+    if (!panel || !content) return;
+
+    if (!userData?.isSignedIn) {
+        panel.hidden = true;
+        return;
+    }
+
+    panel.hidden = false;
+
+    const problemCount = problems?.data?.problemsetQuestionList?.questions?.length ?? 0;
+    const submissionCount = submissions?.data?.recentAcSubmissionList?.length ?? 0;
+
+    const lines = [
+        `user: ${userData?.username ?? "unknown"}`,
+        "",
+        "problems:",
+        `  source: ${problems?.source ?? "n/a"}`,
+        `  fetchStartedAt: ${formatTimestampMs(problems?.fetchStartedAt)}`,
+        `  fetchCompletedAt: ${formatTimestampMs(problems?.fetchCompletedAt)}`,
+        `  lastError: ${problems?.lastError ?? "none"}`,
+        `  count: ${problemCount}`,
+        "",
+        "submissions:",
+        `  firstSyncedAt: ${formatTimestampMs(submissions?.firstSyncedAt)}`,
+        `  lastSyncedAt: ${formatTimestampMs(submissions?.lastSyncedAt)}`,
+        `  lastSyncedTimestamp: ${formatTimestampSeconds(submissions?.lastSyncedTimestamp)}`,
+        `  lastError: ${submissions?.lastError ?? "none"}`,
+        `  count: ${submissionCount}`,
+    ];
+
+    content.textContent = lines.join("\n");
+}
 ///////////////////////////////////////////////////////////////////////
 
 //////////// Availability checking ///////////////
@@ -194,6 +244,12 @@ async function render() {
 
     let allProblemsData = (await chrome.storage.local.get(["problemsKey"])).problemsKey;
     let recentAcceptedSubmissions = (await chrome.storage.local.get(["recentSubmissionsKey"])).recentSubmissionsKey;
+
+    renderDebugPanel({
+        userData,
+        problems: allProblemsData,
+        submissions: recentAcceptedSubmissions,
+    });
     
     var readiness = document.getElementById("currentReadiness");
     readiness.innerHTML = '';
