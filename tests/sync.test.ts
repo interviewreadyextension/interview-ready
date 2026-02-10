@@ -1,8 +1,6 @@
 import { describe, test, expect, vi } from 'vitest';
 import { migrateStorageIfNeeded } from '../src/sync/migration';
-import { updateProblems } from '../src/sync/problem-sync';
 import { updateSubmissions, validateChronologicalOrder } from '../src/sync/submission-sync';
-import { PROBLEMS_GITHUB_URL } from '../src/api/github-api';
 import {
   installChromeStub,
   uninstallChromeStub,
@@ -64,59 +62,6 @@ describe('validateChronologicalOrder', () => {
       { timestamp: '100' },
     ];
     expect(() => validateChronologicalOrder(submissions)).not.toThrow();
-  });
-});
-
-// ─── Problem sync ──────────────────────────────────────────────────
-
-describe('updateProblems', () => {
-  test('sets semaphore before fetch', async () => {
-    const local = installChromeStub({ localData: { problemsKey: {} } });
-    const restoreFetch = installFetchMock(async (url) => {
-      expect(String(url)).toBe(PROBLEMS_GITHUB_URL);
-      const current = await local.get(['problemsKey']);
-      expect((current.problemsKey as any).fetchStartedAt).toBeTruthy();
-      return new Response(JSON.stringify(makeProblemsPayload()), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    });
-
-    try {
-      await updateProblems();
-      const stored = await local.get(['problemsKey']);
-      const problems = stored.problemsKey as any;
-      expect(problems.fetchCompletedAt).toBeTruthy();
-      expect(problems.source).toBe('github');
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  test('uses cached data when GitHub fails', async () => {
-    const cachedProblems = {
-      ...makeProblemsPayload(),
-      source: 'github',
-      fetchStartedAt: 0,
-      fetchCompletedAt: 100,
-      timeStamp: 100,
-    };
-    installChromeStub({ localData: { problemsKey: cachedProblems } });
-    const restoreFetch = installFetchMock(async () => {
-      return new Response('', { status: 404, statusText: 'Not Found' });
-    });
-
-    try {
-      const result = await updateProblems();
-      expect(result.usingCache).toBe(true);
-      const stored = await (globalThis as any).chrome.storage.local.get(['problemsKey']);
-      const problems = stored.problemsKey as any;
-      expect(problems.source).toBe('github');
-      expect(problems.fetchCompletedAt).toBe(100);
-      expect(problems.lastError).toBeTruthy();
-    } finally {
-      restoreFetch();
-    }
   });
 });
 

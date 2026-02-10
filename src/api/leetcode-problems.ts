@@ -8,8 +8,9 @@
 
 import type { Problem } from '../types/models';
 import { delog } from '../shared/logging';
+import { delay } from '../shared/utils';
+import { LEETCODE_GRAPHQL_URL } from './leetcode-graphql';
 
-const LEETCODE_GRAPHQL_URL = 'https://leetcode.com/graphql/';
 const BATCH_SIZE = 200;
 const THROTTLE_MS = 300; // ~3 req/sec
 
@@ -69,10 +70,6 @@ async function fetchBatch(skip: number, limit: number): Promise<ProblemBatchResu
   return { total: list.total, questions: list.questions };
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 export interface FetchProgress {
   fetched: number;
   total: number;
@@ -117,20 +114,4 @@ export async function fetchAllProblemsFromLeetCode(
   }
 
   return { total: total ?? questions.length, questions };
-}
-
-/**
- * Extract a slug → status map from problems (only includes non-null statuses).
- * Used by Mode A to store the status overlay separately from GitHub-sourced problems.
- */
-export function extractStatusMap(
-  questions: Problem[]
-): Record<string, string> {
-  const map: Record<string, string> = {};
-  for (const q of questions) {
-    if (q.status) {
-      map[q.titleSlug] = q.status;
-    }
-  }
-  return map;
 }

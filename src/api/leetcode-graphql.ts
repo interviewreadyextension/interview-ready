@@ -6,13 +6,15 @@ import type {
 } from '../types/leetcode.types';
 import type { UserStatus, AcceptedSubmission } from '../types/models';
 
-const LEETCODE_GRAPHQL_URL = 'https://leetcode.com/graphql/';
-
-// ─── Low-level fetch helpers ────────────────────────────────────────
-
 /**
- * Execute a public (no auth) GraphQL query against LeetCode.
+ * Shared LeetCode GraphQL endpoint.
+ * Every API module should import this rather than hardcoding the URL.
  */
+export const LEETCODE_GRAPHQL_URL = 'https://leetcode.com/graphql/';
+
+// ─── Low-level fetch helper ────────────────────────────────────────
+
+/** Execute a GraphQL POST against LeetCode. */
 async function queryData<T>(queryBody: string): Promise<GraphQLResponse<T>> {
   const response = await fetch(LEETCODE_GRAPHQL_URL, {
     headers: {

@@ -1,20 +1,34 @@
 import type { Problem, AcceptedSubmission, UserStatus } from './models';
 
+// ─── Storage Schema ─────────────────────────────────────────────────
+
 /**
- * Storage schema for chrome.storage.local
+ * Full schema for chrome.storage.local.
+ * Every key the extension reads/writes should be declared here so
+ * that `getStorage()` / `setStorage()` remain type-safe.
  */
 export interface StorageSchema {
+  /** All LeetCode problems (fetched from API in batches) */
   problemsKey: ProblemData;
+  /** Accumulated accepted submissions (merged over time) */
   recentSubmissionsKey: SubmissionData;
+  /** Current LeetCode user status (signed-in, premium, username) */
   userDataKey: UserStatus;
-  problemStatusKey: ProblemStatusData;
+  /** Migration version number */
   _storageVersion: number;
+  /** Popup → content-script: trigger a full problem refresh */
   refresh_problems?: number;
+  /** Popup → content-script: trigger a submission refresh */
   modal_opened?: number;
 }
 
+// ─── Problem Data ───────────────────────────────────────────────────
+
 /**
- * Problem data structure in storage
+ * Problem data stored in `problemsKey`.
+ *
+ * `data.problemsetQuestionList` mirrors the LeetCode GraphQL shape so
+ * downstream code can work with the response directly.
  */
 export interface ProblemData {
   data: {
@@ -23,54 +37,37 @@ export interface ProblemData {
       questions: Problem[];
     };
   };
-  source?: 'github' | 'leetcode';
-  generatedAt?: string; // ISO timestamp from GitHub
-  fetchStartedAt?: number; // Unix ms
-  fetchCompletedAt?: number; // Unix ms
-  lastAttemptAt?: number; // Unix ms
+  /** Where problems were fetched from */
+  source?: 'leetcode';
+  fetchStartedAt?: number;   // Unix ms – set before fetch begins
+  fetchCompletedAt?: number; // Unix ms – set after fetch succeeds
+  lastAttemptAt?: number;    // Unix ms – set on every attempt
   lastError?: string | null;
   usingCache?: boolean;
-  timeStamp?: number; // Unix ms
+  timeStamp?: number;        // Unix ms – general last-modified
 }
 
+// ─── Submission Data ────────────────────────────────────────────────
+
 /**
- * Submission data structure in storage
+ * Accepted submission history stored in `recentSubmissionsKey`.
+ *
+ * The list is accumulated over time via `recentAcSubmissionList`
+ * (public API, ~20 cap per call) and merged with previously stored
+ * entries so the list grows with each popup open / refresh.
  */
 export interface SubmissionData {
   data: {
     recentAcSubmissionList: AcceptedSubmission[];
   };
   source?: string;
-  firstSyncedAt?: number; // Unix ms
-  lastSyncedAt?: number; // Unix ms
-  lastSyncedTimestamp?: string | null; // Most recent submission timestamp
+  firstSyncedAt?: number;          // Unix ms – first-ever sync timestamp
+  lastSyncedAt?: number;           // Unix ms – most recent sync timestamp
+  lastSyncedTimestamp?: string | null; // Newest submission's Unix-second timestamp
   lastError?: string | null;
-  timeStamp?: number; // Unix ms
+  timeStamp?: number;              // Unix ms – general last-modified
 }
 
-/**
- * Problem status overlay (Mode A: GitHub + LeetCode status)
- * Maps titleSlug → status ('ac', 'notac')
- */
-export interface ProblemStatusData {
-  statuses: Record<string, string>;
-  fetchedAt: number;
-  totalProblems: number;
-  fetchedCount: number;
-  lastError: string | null;
-}
-
-/**
- * Storage keys as constants
- */
-export const STORAGE_KEYS = {
-  problems: 'problemsKey',
-  submissions: 'recentSubmissionsKey',
-  userData: 'userDataKey',
-  version: '_storageVersion',
-  refreshTrigger: 'refresh_problems',
-  modalTrigger: 'modal_opened',
-  problemStatus: 'problemStatusKey',
-} as const;
+// ─── Helpers ────────────────────────────────────────────────────────
 
 export type StorageKey = keyof StorageSchema;

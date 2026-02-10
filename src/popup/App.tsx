@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, type FC } from 'react';
-import type { ProblemData, SubmissionData, ProblemStatusData } from '../types/storage.types';
+import type { ProblemData, SubmissionData } from '../types/storage.types';
 import type { UserStatus } from '../types/models';
+import { delogError } from '../shared/logging';
 import {
   getReadinessData,
   buildAcceptedSet,
@@ -139,28 +140,25 @@ export const App: FC = () => {
   const [userData, setUserData] = useState<UserStatus>();
   const [problemData, setProblemData] = useState<ProblemData>();
   const [submissionData, setSubmissionData] = useState<SubmissionData>();
-  const [statusData, setStatusData] = useState<ProblemStatusData>();
   const [loading, setLoading] = useState(true);
   const [legendVisible, setLegendVisible] = useState(false);
   const [dateFilter, setDateFilter] = useState<DateFilterPreset>('all');
   const [refreshing, setRefreshing] = useState(false);
 
-  // Load initial data
+  // Load initial data from chrome.storage.local
   useEffect(() => {
     async function load() {
       const result = await chrome.storage.local.get([
         'userDataKey',
         'problemsKey',
         'recentSubmissionsKey',
-        'problemStatusKey',
-      ]) as { userDataKey?: UserStatus; problemsKey?: ProblemData; recentSubmissionsKey?: SubmissionData; problemStatusKey?: ProblemStatusData };
+      ]) as { userDataKey?: UserStatus; problemsKey?: ProblemData; recentSubmissionsKey?: SubmissionData };
       setUserData(result.userDataKey);
       setProblemData(result.problemsKey);
       setSubmissionData(result.recentSubmissionsKey);
-      setStatusData(result.problemStatusKey);
       setLoading(false);
 
-      // Signal modal opened (triggers submission sync in content script)
+      // Signal popup opened → triggers submission sync in the content script
       if (result.userDataKey?.isSignedIn) {
         chrome.storage.local.set({ modal_opened: Date.now() });
       }
@@ -168,33 +166,30 @@ export const App: FC = () => {
     load();
   }, []);
 
-  // Listen for storage changes (reactive updates)
+  // Reactively update state when storage changes
   useEffect(() => {
     function listener(changes: Record<string, chrome.storage.StorageChange>) {
       if (changes.userDataKey) setUserData(changes.userDataKey.newValue as UserStatus);
       if (changes.problemsKey) setProblemData(changes.problemsKey.newValue as ProblemData);
       if (changes.recentSubmissionsKey) setSubmissionData(changes.recentSubmissionsKey.newValue as SubmissionData);
-      if (changes.problemStatusKey) setStatusData(changes.problemStatusKey.newValue as ProblemStatusData);
     }
     chrome.storage.onChanged.addListener(listener);
     return () => chrome.storage.onChanged.removeListener(listener);
   }, []);
 
-  // Status overlay from Mode A (LeetCode status sync)
-  const statusOverlay = statusData?.statuses;
-
   // Date range for filtering
   const dateRange = useMemo(() => getDateRange(dateFilter), [dateFilter]);
 
-  // Compute readiness
+  // Compute readiness scores
   const readinessData = useMemo<ReadinessData | null>(() => {
     if (!problemData) return null;
-    return getReadinessData(problemData, submissionData, statusOverlay, dateRange);
-  }, [problemData, submissionData, statusOverlay, dateRange]);
+    return getReadinessData(problemData, submissionData, dateRange);
+  }, [problemData, submissionData, dateRange]);
 
+  // Set of accepted slugs (respects date filter)
   const recentAccepted = useMemo(
-    () => buildAcceptedSet(submissionData, statusOverlay, dateRange),
-    [submissionData, statusOverlay, dateRange],
+    () => buildAcceptedSet(submissionData, dateRange),
+    [submissionData, dateRange],
   );
   const questions = problemData?.data?.problemsetQuestionList?.questions;
   const isPremium = userData?.isPremium ?? false;
@@ -209,7 +204,7 @@ export const App: FC = () => {
     return computeBigButtonStates(questions, recentAccepted, isPremium, dateRange);
   }, [questions, recentAccepted, isPremium, dateRange]);
 
-  // Derived stats for info bar
+  // Derived stats
   const totalProblems = questions?.length ?? 0;
   const totalSolved = recentAccepted.size;
   const totalSubmissions = submissionData?.data?.recentAcSubmissionList?.length ?? 0;
@@ -245,11 +240,10 @@ export const App: FC = () => {
     try {
       let slug = await getNextPracticeProblem(topic, target);
       if (!slug) {
-        // Fallback: pick from solved
+        // Fallback: pick from solved problems
         const allProblems = (await chrome.storage.local.get(['problemsKey'])).problemsKey as ProblemData;
         const recSubs = (await chrome.storage.local.get(['recentSubmissionsKey'])).recentSubmissionsKey as SubmissionData | undefined;
-        const recStatusData = (await chrome.storage.local.get(['problemStatusKey'])).problemStatusKey as ProblemStatusData | undefined;
-        const recAccepted = buildAcceptedSet(recSubs, recStatusData?.statuses);
+        const recAccepted = buildAcceptedSet(recSubs);
         const userPremium = ((await chrome.storage.local.get(['userDataKey'])).userDataKey as UserStatus | undefined)?.isPremium;
         const qs = allProblems?.data?.problemsetQuestionList?.questions ?? [];
 
@@ -270,7 +264,7 @@ export const App: FC = () => {
       }
       if (slug) openProblem(slug);
     } catch (e) {
-      console.error('Error selecting problem:', e);
+      delogError('Error selecting problem', e);
     }
   }, []);
 
@@ -279,7 +273,7 @@ export const App: FC = () => {
       const slug = await getPracticeProblem(practiceType);
       if (slug) openProblem(slug);
     } catch (e) {
-      console.error('Error selecting practice problem:', e);
+      delogError('Error selecting practice problem', e);
     }
   }, []);
 

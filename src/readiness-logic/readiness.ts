@@ -1,5 +1,5 @@
 import type { Problem } from '../types/models';
-import type { ProblemData, SubmissionData, ProblemStatusData } from '../types/storage.types';
+import type { ProblemData, SubmissionData } from '../types/storage.types';
 
 /**
  * Target question counts per topic
@@ -55,16 +55,13 @@ export interface DateRange {
 }
 
 /**
- * Build a set of accepted problem slugs from submissions and optional status overlay.
- * The status overlay comes from Mode A (LeetCode status sync) and maps slug → 'ac'|'notac'.
+ * Build a set of accepted problem slugs from submissions.
  *
- * When `dateRange` is provided, only submissions whose timestamp falls within
- * [startSec, endSec] are included. Status overlay entries have no per-problem
- * timestamps, so they are included only when there is NO date filter.
+ * When `dateRange` is provided, only submissions whose timestamp falls
+ * within [startSec, endSec] are included.
  */
 export function buildAcceptedSet(
   submissions?: SubmissionData,
-  statusOverlay?: Record<string, string>,
   dateRange?: DateRange,
 ): Set<string> {
   const accepted = new Set<string>();
@@ -78,13 +75,6 @@ export function buildAcceptedSet(
       accepted.add(item.titleSlug);
     }
   }
-  // Status overlay has no per-problem timestamps.
-  // Include it only when there is no date filter ("all time").
-  if (statusOverlay && !dateRange) {
-    for (const [slug, status] of Object.entries(statusOverlay)) {
-      if (status === 'ac') accepted.add(slug);
-    }
-  }
   return accepted;
 }
 
@@ -95,10 +85,9 @@ export function buildAcceptedSet(
 export function getReadinessData(
   allProblems: ProblemData,
   recentAcceptedSubmissions?: SubmissionData,
-  statusOverlay?: Record<string, string>,
   dateRange?: DateRange,
 ): ReadinessData {
-  const recentAccepted = buildAcceptedSet(recentAcceptedSubmissions, statusOverlay, dateRange);
+  const recentAccepted = buildAcceptedSet(recentAcceptedSubmissions, dateRange);
 
   // When a date range filter is active, ignore `question.status` from LeetCode
   // (it has no timestamp) and rely solely on the date-filtered accepted set.
@@ -330,17 +319,18 @@ export const recommendedSet = new Set(recommendedList);
 export type PracticeTarget = 'suggested' | 'easy' | 'medium' | 'hard' | 'random';
 
 /**
- * Get the next practice problem for a topic
+ * Get the next practice problem for a given topic and difficulty target.
+ *
+ * Reads problem + submission data from chrome.storage.local directly
+ * so the popup can call this without prop-drilling all data.
  */
 export async function getNextPracticeProblem(
   topic: string,
   target: PracticeTarget
 ): Promise<string | null> {
   const allProblems = (await chrome.storage.local.get(['problemsKey'])).problemsKey as ProblemData;
-  const statusData = (await chrome.storage.local.get(['problemStatusKey'])).problemStatusKey as ProblemStatusData | undefined;
   const recentAccepted = buildAcceptedSet(
     (await chrome.storage.local.get(['recentSubmissionsKey'])).recentSubmissionsKey as SubmissionData | undefined,
-    statusData?.statuses
   );
   const userHasPremium = (
     (await chrome.storage.local.get(['userDataKey'])).userDataKey as { isPremium?: boolean } | undefined
@@ -448,15 +438,17 @@ export async function getNextPracticeProblem(
 export type BigPracticeMode = 'suggested' | 'review' | 'random';
 
 /**
- * Get a practice problem by high-level mode
+ * Get a practice problem by high-level mode (suggested / review / random).
+ *
+ * Reads from chrome.storage.local directly — the popup calls this
+ * as a one-shot action when the user clicks a button.
  */
 export async function getPracticeProblem(
   practiceType: BigPracticeMode
 ): Promise<string | null> {
   const allProblems = (await chrome.storage.local.get(['problemsKey'])).problemsKey as ProblemData;
   const { recentSubmissionsKey: recentAcceptedData } = await chrome.storage.local.get(['recentSubmissionsKey']) as { recentSubmissionsKey?: SubmissionData };
-  const statusData = (await chrome.storage.local.get(['problemStatusKey'])).problemStatusKey as ProblemStatusData | undefined;
-  const recentAcceptedSet = buildAcceptedSet(recentAcceptedData, statusData?.statuses);
+  const recentAcceptedSet = buildAcceptedSet(recentAcceptedData);
 
   if (practiceType === 'suggested') {
     const acceptedSet = new Set<string>();
@@ -472,7 +464,7 @@ export async function getPracticeProblem(
       }
     }
 
-    const readinessData = getReadinessData(allProblems, recentAcceptedData, statusData?.statuses);
+    const readinessData = getReadinessData(allProblems, recentAcceptedData);
 
     for (const topic of TARGET_TOPICS) {
       if (readinessData[topic][0] !== 'ready') {

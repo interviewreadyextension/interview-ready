@@ -1,5 +1,9 @@
+// ─── LeetCode Problem ───────────────────────────────────────────────
+
 /**
- * Core problem model from LeetCode
+ * A single LeetCode problem as returned by the `problemsetQuestionList`
+ * GraphQL query.  The `status` field is populated only when the user is
+ * authenticated (content script running on leetcode.com).
  */
 export interface Problem {
   acRate: number;
@@ -7,6 +11,7 @@ export interface Problem {
   frontendQuestionId: string;
   isFavor: boolean;
   paidOnly: boolean;
+  /** 'ac' | 'notac' | null — null means the user has never attempted it */
   status: string | null;
   title: string;
   titleSlug: string;
@@ -21,19 +26,23 @@ export interface TopicTag {
   slug: string;
 }
 
+// ─── Accepted Submission ────────────────────────────────────────────
+
 /**
- * Accepted submission model
+ * A single accepted submission, normalised from various LeetCode APIs.
+ * `timestamp` is a Unix‑second value stored as a string (LeetCode convention).
  */
 export interface AcceptedSubmission {
   id: string;
   title: string;
   titleSlug: string;
-  timestamp: string; // Unix timestamp as string
+  /** Unix timestamp in seconds, stored as a string */
+  timestamp: string;
 }
 
-/**
- * User status from LeetCode
- */
+// ─── User Status ────────────────────────────────────────────────────
+
+/** Current user status returned by the `globalData` GraphQL query. */
 export interface UserStatus {
   isSignedIn: boolean;
   isPremium: boolean;
@@ -41,28 +50,3 @@ export interface UserStatus {
   realName?: string;
   avatar?: string;
 }
-
-/**
- * Readiness score model
- */
-export interface TopicReadiness {
-  topic: string;
-  solved: number;
-  target: number;
-  percentage: number;
-  status: 'ready' | 'almost' | 'not-ready';
-}
-
-export interface ReadinessData {
-  topics: TopicReadiness[];
-  overall: {
-    ready: number;
-    almost: number;
-    notReady: number;
-  };
-}
-
-/**
- * Practice problem selection modes
- */
-export type PracticeMode = 'suggested' | 'review' | 'random';

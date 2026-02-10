@@ -184,28 +184,17 @@ export function makeAcSubmissionsResponse(submissions: ReturnType<typeof makeSub
 }
 
 /**
- * Build a fetch mock that routes to the correct endpoint:
- *   - `getACSubmissions` GraphQL → recentAcSubmissionList response
- *   - `globalData` GraphQL → user status
- *   - GitHub problems URL → problems payload
+ * Build a fetch mock that routes GraphQL requests to the correct handler:
+ *   - `getACSubmissions` → recentAcSubmissionList response
+ *   - `globalData`       → user status response
  */
 export function makeFetchResponder(opts: {
   acSubmissions?: ReturnType<typeof makeSubmission>[];
-  problemsUrl?: string;
 }) {
-  const { acSubmissions, problemsUrl } = opts;
+  const { acSubmissions } = opts;
 
   return async (url: string | URL | Request, options: RequestInit = {}): Promise<Response> => {
     const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
-
-    // GitHub problems
-    if (problemsUrl && urlStr === problemsUrl) {
-      return new Response(JSON.stringify(makeProblemsPayload()), {
-        status: 200,
-        statusText: 'OK',
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
 
     // GraphQL
     if (urlStr === 'https://leetcode.com/graphql/') {
