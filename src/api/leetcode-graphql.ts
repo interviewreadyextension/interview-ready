@@ -2,22 +2,22 @@ import type {
   GraphQLQuery,
   GraphQLResponse,
   GlobalDataResponse,
-  SubmissionListVariables,
-  SubmissionListResponse,
-  LeetCodeSubmission,
+  RecentAcceptedResponse,
 } from '../types/leetcode.types';
-import type { UserStatus } from '../types/models';
-// import { delog } from '../shared/logging';
+import type { UserStatus, AcceptedSubmission } from '../types/models';
 
 const LEETCODE_GRAPHQL_URL = 'https://leetcode.com/graphql/';
 
+// ─── Low-level fetch helpers ────────────────────────────────────────
+
 /**
- * Execute a GraphQL query against LeetCode
+ * Execute a public (no auth) GraphQL query against LeetCode.
  */
 async function queryData<T>(queryBody: string): Promise<GraphQLResponse<T>> {
   const response = await fetch(LEETCODE_GRAPHQL_URL, {
     headers: {
       'content-type': 'application/json',
+      'Referer': 'https://leetcode.com',
     },
     body: queryBody,
     method: 'POST',
@@ -29,6 +29,8 @@ async function queryData<T>(queryBody: string): Promise<GraphQLResponse<T>> {
 
   return response.json();
 }
+
+// ─── Public API functions ───────────────────────────────────────────
 
 /**
  * Fetch user status (signed in, premium, username)
@@ -45,45 +47,40 @@ export async function fetchUserStatus(): Promise<UserStatus> {
 }
 
 /**
- * Fetch a single page of submissions
+ * Fetch recent accepted submissions for a user (public, no auth needed).
+ * Capped at ~20 results by LeetCode — suitable for incremental sync only.
  */
-export async function fetchSubmissionListPage(
-  variables: SubmissionListVariables
-): Promise<SubmissionListResponse['questionSubmissionList']> {
-  const query: GraphQLQuery<SubmissionListVariables> = {
-    operationName: 'submissionList',
-    query: `query submissionList($offset: Int!, $limit: Int!, $lastKey: String) {
-  questionSubmissionList(offset: $offset, limit: $limit, lastKey: $lastKey) {
-    lastKey
-    hasNext
-    submissions {
-      id
-      title
-      titleSlug
-      status
-      statusDisplay
-      timestamp
-    }
+export async function fetchRecentAcceptedSubmissions(
+  username: string,
+  limit: number = 20
+): Promise<AcceptedSubmission[]> {
+  const query: GraphQLQuery<{ username: string; limit: number }> = {
+    operationName: 'getACSubmissions',
+    query: `query getACSubmissions($username: String!, $limit: Int) {
+  recentAcSubmissionList(username: $username, limit: $limit) {
+    id
+    title
+    titleSlug
+    timestamp
+    statusDisplay
+    lang
   }
 }`,
-    variables,
+    variables: { username, limit },
   };
 
-  const result = await queryData<SubmissionListResponse>(JSON.stringify(query));
-  const list = result.data.questionSubmissionList;
+  const result = await queryData<RecentAcceptedResponse>(JSON.stringify(query));
+  const list = result.data.recentAcSubmissionList;
 
-  if (!list || !Array.isArray(list.submissions)) {
-    throw new Error('Unexpected submission list response from LeetCode');
+  if (!Array.isArray(list)) {
+    throw new Error('Unexpected recentAcSubmissionList response from LeetCode');
   }
 
-  return list;
-}
-
-/**
- * Check if a submission is accepted
- */
-export function isAcceptedSubmission(submission: LeetCodeSubmission): boolean {
-  if (!submission) return false;
-  if (submission.statusDisplay === 'Accepted') return true;
-  return submission.status === 10;
+  // Normalize to our AcceptedSubmission shape
+  return list.map((item) => ({
+    id: String(item.id ?? ''),
+    title: item.title ?? '',
+    titleSlug: item.titleSlug ?? '',
+    timestamp: String(item.timestamp ?? ''),
+  }));
 }

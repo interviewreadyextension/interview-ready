@@ -7,6 +7,7 @@ export interface StorageSchema {
   problemsKey: ProblemData;
   recentSubmissionsKey: SubmissionData;
   userDataKey: UserStatus;
+  problemStatusKey: ProblemStatusData;
   _storageVersion: number;
   refresh_problems?: number;
   modal_opened?: number;
@@ -22,7 +23,7 @@ export interface ProblemData {
       questions: Problem[];
     };
   };
-  source?: 'github';
+  source?: 'github' | 'leetcode';
   generatedAt?: string; // ISO timestamp from GitHub
   fetchStartedAt?: number; // Unix ms
   fetchCompletedAt?: number; // Unix ms
@@ -48,6 +49,18 @@ export interface SubmissionData {
 }
 
 /**
+ * Problem status overlay (Mode A: GitHub + LeetCode status)
+ * Maps titleSlug → status ('ac', 'notac')
+ */
+export interface ProblemStatusData {
+  statuses: Record<string, string>;
+  fetchedAt: number;
+  totalProblems: number;
+  fetchedCount: number;
+  lastError: string | null;
+}
+
+/**
  * Storage keys as constants
  */
 export const STORAGE_KEYS = {
@@ -57,6 +70,7 @@ export const STORAGE_KEYS = {
   version: '_storageVersion',
   refreshTrigger: 'refresh_problems',
   modalTrigger: 'modal_opened',
+  problemStatus: 'problemStatusKey',
 } as const;
 
 export type StorageKey = keyof StorageSchema;

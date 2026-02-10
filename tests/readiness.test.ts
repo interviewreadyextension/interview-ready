@@ -1,6 +1,7 @@
 import { describe, test, expect, afterEach, vi } from 'vitest';
 import {
   getReadinessData,
+  buildAcceptedSet,
   getNextPracticeProblem,
   getPracticeProblem,
   randomElementInArray,
@@ -29,6 +30,65 @@ describe('randomElementInArray', () => {
   });
 });
 
+// ─── buildAcceptedSet with status overlay ─────────────────────────
+
+describe('buildAcceptedSet', () => {
+  test('includes slugs from status overlay', () => {
+    const statusOverlay = { 'two-sum': 'ac', 'three-sum': 'notac', 'four-sum': 'ac' };
+    const set = buildAcceptedSet(undefined, statusOverlay);
+    expect(set.has('two-sum')).toBe(true);
+    expect(set.has('four-sum')).toBe(true);
+    expect(set.has('three-sum')).toBe(false);
+  });
+
+  test('merges submissions and status overlay', () => {
+    const submissions = {
+      data: { recentAcSubmissionList: [{ titleSlug: 'a', id: '1', title: 'A', timestamp: '1' }] },
+    };
+    const statusOverlay = { 'b': 'ac', 'c': 'notac' };
+    const set = buildAcceptedSet(submissions, statusOverlay);
+    expect(set.has('a')).toBe(true);
+    expect(set.has('b')).toBe(true);
+    expect(set.has('c')).toBe(false);
+  });
+
+  test('filters submissions by date range', () => {
+    const submissions = {
+      data: {
+        recentAcSubmissionList: [
+          { titleSlug: 'recent', id: '1', title: 'R', timestamp: '1000' },
+          { titleSlug: 'old', id: '2', title: 'O', timestamp: '100' },
+        ],
+      },
+    };
+    // Range that includes timestamp 1000 but not 100
+    const set = buildAcceptedSet(submissions, undefined, { startSec: 500, endSec: 2000 });
+    expect(set.has('recent')).toBe(true);
+    expect(set.has('old')).toBe(false);
+  });
+
+  test('excludes status overlay when date range is active', () => {
+    const submissions = {
+      data: {
+        recentAcSubmissionList: [
+          { titleSlug: 'a', id: '1', title: 'A', timestamp: '1000' },
+        ],
+      },
+    };
+    const statusOverlay = { 'b': 'ac' };
+    // With date range, status overlay is excluded (no timestamps available)
+    const set = buildAcceptedSet(submissions, statusOverlay, { startSec: 500, endSec: 2000 });
+    expect(set.has('a')).toBe(true);
+    expect(set.has('b')).toBe(false);
+  });
+
+  test('includes status overlay when no date range', () => {
+    const statusOverlay = { 'b': 'ac' };
+    const set = buildAcceptedSet(undefined, statusOverlay);
+    expect(set.has('b')).toBe(true);
+  });
+});
+
 // ─── getReadinessData ──────────────────────────────────────────────
 
 describe('getReadinessData', () => {
@@ -53,6 +113,17 @@ describe('getReadinessData', () => {
     };
 
     const result = getReadinessData(allProblems, recentAcceptedSubmissions);
+    expect(result.array).toBeDefined();
+    expect(result.array[1]).not.toBe(0);
+  });
+
+  test('treats status overlay "ac" as solved (Mode A)', () => {
+    const allProblems = makeAllProblems([
+      q({ titleSlug: 'y', difficulty: 'Easy', status: null, topicSlugs: ['array'] }),
+    ]);
+
+    const statusOverlay = { 'y': 'ac' };
+    const result = getReadinessData(allProblems, undefined, statusOverlay);
     expect(result.array).toBeDefined();
     expect(result.array[1]).not.toBe(0);
   });

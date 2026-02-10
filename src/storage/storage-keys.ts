@@ -9,6 +9,7 @@ export const STORAGE_KEYS = {
   version: '_storageVersion',
   refreshTrigger: 'refresh_problems',
   modalTrigger: 'modal_opened',
+  problemStatus: 'problemStatusKey',
 } as const;
 
 export const STORAGE_VERSION = 1;

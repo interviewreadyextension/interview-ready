@@ -156,55 +156,49 @@ export function makeProblemsPayload(): ProblemData {
   };
 }
 
-interface SubmissionPageData {
-  submissions: Array<{
-    id: string;
-    title: string;
-    titleSlug: string;
-    statusDisplay: string;
-    status: number;
-    timestamp: string;
-  }>;
-  hasNext: boolean;
-  lastKey: string | null;
-}
-
+/**
+ * Create an AcceptedSubmission-shaped entry (camelCase).
+ */
 export function makeSubmission(opts: {
   id: number | string;
   timestamp: number;
   titleSlug?: string;
-  statusDisplay?: string;
-  status?: number;
 }) {
   return {
     id: String(opts.id),
     title: 'Two Sum',
     titleSlug: opts.titleSlug ?? 'two-sum',
-    statusDisplay: opts.statusDisplay ?? 'Accepted',
-    status: opts.status ?? 10,
     timestamp: String(opts.timestamp),
   };
 }
 
-export function makeSubmissionPage(data: SubmissionPageData) {
+/**
+ * Build a `recentAcSubmissionList` GraphQL response (public, ~20 cap).
+ */
+export function makeAcSubmissionsResponse(submissions: ReturnType<typeof makeSubmission>[]) {
   return {
     data: {
-      questionSubmissionList: {
-        submissions: data.submissions,
-        hasNext: data.hasNext,
-        lastKey: data.lastKey,
-      },
+      recentAcSubmissionList: submissions,
     },
   };
 }
 
-export function makeGraphQLFetchResponder(
-  pages: ReturnType<typeof makeSubmissionPage>[],
-  problemsUrl?: string,
-) {
+/**
+ * Build a fetch mock that routes to the correct endpoint:
+ *   - `getACSubmissions` GraphQL → recentAcSubmissionList response
+ *   - `globalData` GraphQL → user status
+ *   - GitHub problems URL → problems payload
+ */
+export function makeFetchResponder(opts: {
+  acSubmissions?: ReturnType<typeof makeSubmission>[];
+  problemsUrl?: string;
+}) {
+  const { acSubmissions, problemsUrl } = opts;
+
   return async (url: string | URL | Request, options: RequestInit = {}): Promise<Response> => {
     const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
 
+    // GitHub problems
     if (problemsUrl && urlStr === problemsUrl) {
       return new Response(JSON.stringify(makeProblemsPayload()), {
         status: 200,
@@ -213,16 +207,23 @@ export function makeGraphQLFetchResponder(
       });
     }
 
+    // GraphQL
     if (urlStr === 'https://leetcode.com/graphql/') {
       const body = JSON.parse(options.body as string ?? '{}');
-      if (body.operationName === 'submissionList') {
-        const offset = body.variables?.offset ?? 0;
-        const pageIndex = Math.floor(offset / 20);
-        const page = pages[pageIndex];
-        if (!page) {
-          throw new Error(`Unexpected submission page request at offset ${offset}`);
-        }
-        return new Response(JSON.stringify(page), {
+
+      if (body.operationName === 'globalData') {
+        return new Response(JSON.stringify({
+          data: { userStatus: { isSignedIn: true, isPremium: false, username: 'tester' } },
+        }), {
+          status: 200,
+          statusText: 'OK',
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Public recent-accepted endpoint (incremental sync)
+      if (body.operationName === 'getACSubmissions' && acSubmissions) {
+        return new Response(JSON.stringify(makeAcSubmissionsResponse(acSubmissions)), {
           status: 200,
           statusText: 'OK',
           headers: { 'Content-Type': 'application/json' },

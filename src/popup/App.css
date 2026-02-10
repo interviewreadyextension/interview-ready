@@ -9,19 +9,58 @@ button {
   font-weight: unset;
 }
 
-#refresh-button {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  background-color: unset;
-  border: 0px;
-  color: green;
+/** control row */
+.control-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-bottom: 1px solid #eee;
+}
+
+.date-filter {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 13px;
+  padding: 3px 6px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+}
+
+.control-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.control-btn {
+  background: none;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 16px;
+  cursor: pointer;
+  color: #555;
+}
+
+.control-btn:hover {
+  background: #f0f0f0;
+  color: #333;
+}
+
+.control-btn.spinning {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /** special ids */
 #legend {
   position: absolute;
-  top: 12px;
+  top: 40px;
   z-index: 2;
   background-color: #fafafa;
   box-shadow: 0 0 10px rgba(0, 123, 255, 0.8);
@@ -31,14 +70,7 @@ button {
   transform: translateX(-50%);
 }
 
-#legend-button {
-  position: absolute;
-  top: 2px;
-  right: 24px;
-  background-color: unset;
-  border: 0px;
-  color: turquoise;
-}
+/* legend-button styles removed; now in control-row */
 
 /** classes */
 .github-link {
@@ -134,13 +166,14 @@ button {
 }
 
 .bigpractice {
-  width: 88%;
+  width: 100%;
+  box-sizing: border-box;
   background-color: turquoise;
   box-shadow: 0 0 2px rgba(0, 123, 255, 0.8);
   color: #002b5b;
   border: unset;
   border-radius: 5px;
-  margin: 2px;
+  margin: 2px 0;
   text-transform: lowercase;
 }
 
@@ -259,25 +292,115 @@ button.practice {
 
 /** loading */
 .loading-container {
-  height: 300px;
+  min-height: 80px;
   text-align: center;
+  padding: 24px 0;
 }
 
-.loading-ani {
-  animation: loading_animate 4s infinite linear;
-  height: 215px;
+.loading-bar {
+  width: 80%;
+  max-width: 320px;
+  height: 6px;
+  margin: 20px auto 0;
+  background: #e0e0e0;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.loading-bar-fill {
+  width: 40%;
+  height: 100%;
+  background: linear-gradient(90deg, #ffa116, #ffb84d);
+  border-radius: 3px;
+  animation: loading-slide 1.2s ease-in-out infinite;
 }
 
 .loading-text {
   text-align: center;
-  padding-bottom: 25px;
+  padding-bottom: 8px;
+  font-size: 14px;
+  color: #888;
 }
 
-@keyframes loading_animate {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(359deg);
-  }
+@keyframes loading-slide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
+/** sync progress */
+.sync-progress {
+  padding: 8px 12px;
+  text-align: center;
+}
+
+.sync-progress-label {
+  font-size: 12px;
+  color: #bbb;
+  margin-bottom: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sync-number {
+  display: inline-block;
+  min-width: 3ch;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.sync-progress-track {
+  width: 100%;
+  height: 4px;
+  background: #333;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.sync-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #ffa116, #ffcc00);
+  border-radius: 2px;
+  transition: width 0.4s ease-out;
+}
+
+.sync-progress-fill.indeterminate {
+  width: 40%;
+  animation: loading-slide 1.2s ease-in-out infinite;
+}
+
+/** info summary */
+.info-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: #888;
+  border-bottom: 1px solid #eee;
+  gap: 6px;
+}
+
+.info-summary .info-left {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.info-summary .info-right {
+  white-space: nowrap;
+  color: #aaa;
+  font-size: 10px;
+}
+
+.info-stat {
+  white-space: nowrap;
+}
+
+.info-stat .info-value {
+  font-weight: 600;
+  color: #555;
+}
+
+.info-stat .info-label {
+  color: #aaa;
 }

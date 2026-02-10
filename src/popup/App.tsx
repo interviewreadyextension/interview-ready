@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, type FC } from 'react';
-import type { ProblemData, SubmissionData } from '../types/storage.types';
+import type { ProblemData, SubmissionData, ProblemStatusData } from '../types/storage.types';
 import type { UserStatus } from '../types/models';
 import {
   getReadinessData,
@@ -14,8 +14,9 @@ import {
   type BigButtonStates,
   type PracticeTarget,
   type BigPracticeMode,
+  type DateRange,
 } from '../readiness-logic/readiness';
-import { DebugPanel } from './components/DebugPanel';
+import { SyncProgressBar } from './components/SyncProgress';
 import './App.css';
 
 // ─── Helpers ────────────────────────────────────────────────
@@ -36,6 +37,23 @@ function ensureLeetCodeTab(): void {
       chrome.tabs.create({ url: 'https://leetcode.com', active: false });
     }
   });
+}
+
+// ─── Date filter presets ────────────────────────────────────
+export type DateFilterPreset = '7d' | '30d' | '120d' | 'all';
+
+const DATE_FILTER_OPTIONS: { value: DateFilterPreset; label: string }[] = [
+  { value: '7d', label: 'Last 7 days' },
+  { value: '30d', label: 'Last 30 days' },
+  { value: '120d', label: 'Last 120 days' },
+  { value: 'all', label: 'All time' },
+];
+
+function getDateRange(preset: DateFilterPreset): DateRange | undefined {
+  if (preset === 'all') return undefined;
+  const days = preset === '7d' ? 7 : preset === '30d' ? 30 : 120;
+  const nowSec = Math.floor(Date.now() / 1000);
+  return { startSec: nowSec - days * 86400, endSec: nowSec };
 }
 
 // ─── Legend component ───────────────────────────────────────
@@ -121,8 +139,11 @@ export const App: FC = () => {
   const [userData, setUserData] = useState<UserStatus>();
   const [problemData, setProblemData] = useState<ProblemData>();
   const [submissionData, setSubmissionData] = useState<SubmissionData>();
+  const [statusData, setStatusData] = useState<ProblemStatusData>();
   const [loading, setLoading] = useState(true);
   const [legendVisible, setLegendVisible] = useState(false);
+  const [dateFilter, setDateFilter] = useState<DateFilterPreset>('all');
+  const [refreshing, setRefreshing] = useState(false);
 
   // Load initial data
   useEffect(() => {
@@ -131,10 +152,12 @@ export const App: FC = () => {
         'userDataKey',
         'problemsKey',
         'recentSubmissionsKey',
-      ]) as { userDataKey?: UserStatus; problemsKey?: ProblemData; recentSubmissionsKey?: SubmissionData };
+        'problemStatusKey',
+      ]) as { userDataKey?: UserStatus; problemsKey?: ProblemData; recentSubmissionsKey?: SubmissionData; problemStatusKey?: ProblemStatusData };
       setUserData(result.userDataKey);
       setProblemData(result.problemsKey);
       setSubmissionData(result.recentSubmissionsKey);
+      setStatusData(result.problemStatusKey);
       setLoading(false);
 
       // Signal modal opened (triggers submission sync in content script)
@@ -151,30 +174,65 @@ export const App: FC = () => {
       if (changes.userDataKey) setUserData(changes.userDataKey.newValue as UserStatus);
       if (changes.problemsKey) setProblemData(changes.problemsKey.newValue as ProblemData);
       if (changes.recentSubmissionsKey) setSubmissionData(changes.recentSubmissionsKey.newValue as SubmissionData);
+      if (changes.problemStatusKey) setStatusData(changes.problemStatusKey.newValue as ProblemStatusData);
     }
     chrome.storage.onChanged.addListener(listener);
     return () => chrome.storage.onChanged.removeListener(listener);
   }, []);
 
+  // Status overlay from Mode A (LeetCode status sync)
+  const statusOverlay = statusData?.statuses;
+
+  // Date range for filtering
+  const dateRange = useMemo(() => getDateRange(dateFilter), [dateFilter]);
+
   // Compute readiness
   const readinessData = useMemo<ReadinessData | null>(() => {
     if (!problemData) return null;
-    return getReadinessData(problemData, submissionData);
-  }, [problemData, submissionData]);
+    return getReadinessData(problemData, submissionData, statusOverlay, dateRange);
+  }, [problemData, submissionData, statusOverlay, dateRange]);
 
-  const recentAccepted = useMemo(() => buildAcceptedSet(submissionData), [submissionData]);
+  const recentAccepted = useMemo(
+    () => buildAcceptedSet(submissionData, statusOverlay, dateRange),
+    [submissionData, statusOverlay, dateRange],
+  );
   const questions = problemData?.data?.problemsetQuestionList?.questions;
   const isPremium = userData?.isPremium ?? false;
 
   const availability = useMemo<Record<string, TopicAvailability> | null>(() => {
     if (!questions) return null;
-    return computeTopicAvailability(questions, recentAccepted, isPremium);
-  }, [questions, recentAccepted, isPremium]);
+    return computeTopicAvailability(questions, recentAccepted, isPremium, dateRange);
+  }, [questions, recentAccepted, isPremium, dateRange]);
 
   const bigButtonStates = useMemo<BigButtonStates | null>(() => {
     if (!questions) return null;
-    return computeBigButtonStates(questions, recentAccepted, isPremium);
-  }, [questions, recentAccepted, isPremium]);
+    return computeBigButtonStates(questions, recentAccepted, isPremium, dateRange);
+  }, [questions, recentAccepted, isPremium, dateRange]);
+
+  // Derived stats for info bar
+  const totalProblems = questions?.length ?? 0;
+  const totalSolved = recentAccepted.size;
+  const totalSubmissions = submissionData?.data?.recentAcSubmissionList?.length ?? 0;
+
+  const formatAgo = useCallback((ts: number | undefined) => {
+    if (!ts) return null;
+    const now = Date.now();
+    const diffMin = Math.floor((now - ts) / 60000);
+    if (diffMin < 1) return 'just now';
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `${diffHr}h ago`;
+    return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }, []);
+
+  const problemsSyncLabel = useMemo(
+    () => formatAgo(problemData?.fetchCompletedAt),
+    [problemData?.fetchCompletedAt, formatAgo],
+  );
+  const subsSyncLabel = useMemo(
+    () => formatAgo(submissionData?.lastSyncedAt),
+    [submissionData?.lastSyncedAt, formatAgo],
+  );
 
   // Sorted topic data
   const sortedTopics = useMemo(() => {
@@ -190,7 +248,8 @@ export const App: FC = () => {
         // Fallback: pick from solved
         const allProblems = (await chrome.storage.local.get(['problemsKey'])).problemsKey as ProblemData;
         const recSubs = (await chrome.storage.local.get(['recentSubmissionsKey'])).recentSubmissionsKey as SubmissionData | undefined;
-        const recAccepted = buildAcceptedSet(recSubs);
+        const recStatusData = (await chrome.storage.local.get(['problemStatusKey'])).problemStatusKey as ProblemStatusData | undefined;
+        const recAccepted = buildAcceptedSet(recSubs, recStatusData?.statuses);
         const userPremium = ((await chrome.storage.local.get(['userDataKey'])).userDataKey as UserStatus | undefined)?.isPremium;
         const qs = allProblems?.data?.problemsetQuestionList?.questions ?? [];
 
@@ -225,8 +284,14 @@ export const App: FC = () => {
   }, []);
 
   const handleRefresh = useCallback(() => {
-    chrome.storage.local.set({ refresh_problems: Date.now() });
+    setRefreshing(true);
+    chrome.storage.local.set({
+      refresh_problems: Date.now(),
+      modal_opened: Date.now(),
+    });
     ensureLeetCodeTab();
+    // Clear the spinning state after a short delay
+    setTimeout(() => setRefreshing(false), 2000);
   }, []);
 
   const handleLegend = useCallback(() => {
@@ -240,11 +305,13 @@ export const App: FC = () => {
       <div className="homecontainer">
         <div className="loading-container">
           <div className="loading-text">Loading</div>
-          <img className="loading-ani" src="../images/loading.png" alt="Loading" />
+          <div className="loading-bar"><div className="loading-bar-fill" /></div>
         </div>
+        <SyncProgressBar />
       </div>
     );
   }
+
 
   if (!userData?.isSignedIn) {
     return (
@@ -269,17 +336,64 @@ export const App: FC = () => {
     return (
       <div className="homecontainer">
         <div className="loading-container">
-          <div className="loading-text">Loading</div>
-          <img className="loading-ani" src="../images/loading.png" alt="Loading" />
+          <div className="loading-text">Loading problem data…</div>
+          <div className="loading-bar"><div className="loading-bar-fill" /></div>
         </div>
-        <DebugPanel userData={userData} problems={problemData} submissions={submissionData} />
+        <SyncProgressBar />
       </div>
     );
   }
-
   return (
     <div className="homecontainer">
       <Legend visible={legendVisible} />
+
+      <div className="control-row">
+        <select
+          className="date-filter"
+          value={dateFilter}
+          onChange={(e) => setDateFilter(e.target.value as DateFilterPreset)}
+        >
+          {DATE_FILTER_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+        <div className="control-buttons">
+          <button className="clickable control-btn" onClick={handleLegend} title="Legend">?</button>
+          <button
+            className={`clickable control-btn${refreshing ? ' spinning' : ''}`}
+            onClick={handleRefresh}
+            title="Refresh"
+            disabled={refreshing}
+          >↺</button>
+        </div>
+      </div>
+
+      <div className="info-summary">
+        <div className="info-left">
+          {userData?.username && (
+            <span className="info-stat">
+              <span className="info-value">{userData.username}</span>
+              {userData?.isPremium && <span className="info-label"> ★</span>}
+            </span>
+          )}
+          <span className="info-stat">
+            <span className="info-value">{totalSolved}</span>
+            <span className="info-label">/{totalProblems} solved</span>
+            {dateFilter !== 'all' && (
+              <span className="info-label"> ({dateFilter})</span>
+            )}
+          </span>
+          <span className="info-stat">
+            <span className="info-value">{totalSubmissions.toLocaleString()}</span>
+            <span className="info-label"> subs</span>
+          </span>
+        </div>
+        <div className="info-right">
+          {problemsSyncLabel && <span>problems {problemsSyncLabel}</span>}
+          {problemsSyncLabel && subsSyncLabel && <span> · </span>}
+          {subsSyncLabel && <span>subs {subsSyncLabel}</span>}
+        </div>
+      </div>
 
       <div id="currentReadiness">
         {/* Top big button: suggested */}
@@ -289,9 +403,6 @@ export const App: FC = () => {
         >
           {bigButtonStates.suggested.label}
         </button>
-
-        <button id="legend-button" className="clickable" onClick={handleLegend}>?</button>
-        <button id="refresh-button" className="clickable" onClick={handleRefresh}>↺</button>
 
         {/* Topic rows sorted by readiness */}
         {sortedTopics.map(([topic, [status, percentage]]) =>
@@ -334,7 +445,45 @@ export const App: FC = () => {
         </button>
       </div>
 
-      <DebugPanel userData={userData} problems={problemData} submissions={submissionData} />
+      <SyncProgressBar />
+
+      <details className="debug-panel">
+        <summary>Debug Info</summary>
+        <div id="debug-content">
+          <strong>Problems:</strong> {totalProblems} loaded
+          {problemData?.source && ` (source: ${problemData.source})`}
+          {problemData?.fetchCompletedAt && ` @ ${new Date(problemData.fetchCompletedAt).toLocaleTimeString()}`}
+          {problemData?.lastError && <span style={{color:'red'}}> ERROR: {problemData.lastError}</span>}
+          {'\n'}
+          <strong>Sample problem status:</strong>{' '}
+          {(() => {
+            const qs = problemData?.data?.problemsetQuestionList?.questions;
+            if (!qs?.length) return 'no problems';
+            const withStatus = qs.filter(q => q.status);
+            const sample = qs.slice(0, 3).map(q => `${q.titleSlug}:${q.status ?? 'null'}`).join(', ');
+            return `${withStatus.length}/${qs.length} have status field. Sample: ${sample}`;
+          })()}
+          {'\n'}
+          <strong>Submissions:</strong> {totalSubmissions} stored
+          {submissionData?.source && ` (source: ${submissionData.source})`}
+          {submissionData?.lastSyncedAt && ` @ ${new Date(submissionData.lastSyncedAt).toLocaleTimeString()}`}
+          {submissionData?.lastError && <span style={{color:'red'}}> ERROR: {submissionData.lastError}</span>}
+          {'\n'}
+          <strong>First synced:</strong> {submissionData?.firstSyncedAt ? new Date(submissionData.firstSyncedAt).toLocaleString() : 'never'}
+          {'\n'}
+          <strong>Accepted set (filtered):</strong> {totalSolved} slugs
+          {dateFilter !== 'all' && ` (range: ${dateFilter})`}
+          {'\n'}
+          <strong>Sample submissions:</strong>{' '}
+          {(() => {
+            const subs = submissionData?.data?.recentAcSubmissionList;
+            if (!subs?.length) return 'none';
+            return subs.slice(0, 3).map(s =>
+              `${s.titleSlug} (ts:${s.timestamp}, ${new Date(Number(s.timestamp) * 1000).toLocaleDateString()})`
+            ).join('; ');
+          })()}
+        </div>
+      </details>
 
       <div className="github-link">
         <a href="https://github.com/interviewreadyextension/interview-ready" target="_blank" rel="noreferrer">

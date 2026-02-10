@@ -26,33 +26,7 @@ export interface ProblemSetResponse {
 }
 
 /**
- * Submission list query
- */
-export interface SubmissionListVariables {
-  offset: number;
-  limit: number;
-  lastKey: string | null;
-}
-
-export interface SubmissionListResponse {
-  questionSubmissionList: {
-    lastKey: string | null;
-    hasNext: boolean;
-    submissions: LeetCodeSubmission[];
-  };
-}
-
-export interface LeetCodeSubmission {
-  id: string;
-  title: string;
-  titleSlug: string;
-  status: number; // 10 = Accepted
-  statusDisplay: string; // "Accepted", "Wrong Answer", etc.
-  timestamp: string;
-}
-
-/**
- * Recent accepted submissions query (alternative endpoint)
+ * Public recent accepted submissions query (`recentAcSubmissionList` — no auth, capped ~20)
  */
 export interface RecentAcceptedVariables {
   username: string;

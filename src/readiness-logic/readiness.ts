@@ -1,5 +1,5 @@
 import type { Problem } from '../types/models';
-import type { ProblemData, SubmissionData } from '../types/storage.types';
+import type { ProblemData, SubmissionData, ProblemStatusData } from '../types/storage.types';
 
 /**
  * Target question counts per topic
@@ -46,33 +46,69 @@ export interface TopicReadiness {
 export type ReadinessData = Record<string, [ReadinessStatus, number]>;
 
 /**
- * Build a set of accepted problem slugs from submissions
+ * Date range for filtering which solved problems count toward readiness.
+ * Timestamps are Unix seconds (matching LeetCode's submission timestamps).
  */
-export function buildAcceptedSet(submissions?: SubmissionData): Set<string> {
+export interface DateRange {
+  startSec: number;
+  endSec: number;
+}
+
+/**
+ * Build a set of accepted problem slugs from submissions and optional status overlay.
+ * The status overlay comes from Mode A (LeetCode status sync) and maps slug → 'ac'|'notac'.
+ *
+ * When `dateRange` is provided, only submissions whose timestamp falls within
+ * [startSec, endSec] are included. Status overlay entries have no per-problem
+ * timestamps, so they are included only when there is NO date filter.
+ */
+export function buildAcceptedSet(
+  submissions?: SubmissionData,
+  statusOverlay?: Record<string, string>,
+  dateRange?: DateRange,
+): Set<string> {
   const accepted = new Set<string>();
   const acList = submissions?.data?.recentAcSubmissionList;
   if (acList?.length) {
     for (const item of acList) {
+      if (dateRange) {
+        const ts = Number(item.timestamp);
+        if (ts < dateRange.startSec || ts > dateRange.endSec) continue;
+      }
       accepted.add(item.titleSlug);
+    }
+  }
+  // Status overlay has no per-problem timestamps.
+  // Include it only when there is no date filter ("all time").
+  if (statusOverlay && !dateRange) {
+    for (const [slug, status] of Object.entries(statusOverlay)) {
+      if (status === 'ac') accepted.add(slug);
     }
   }
   return accepted;
 }
 
 /**
- * Calculate readiness data for all target topics
+ * Calculate readiness data for all target topics.
+ * When `dateRange` is provided, only problems solved within that range count.
  */
 export function getReadinessData(
   allProblems: ProblemData,
-  recentAcceptedSubmissions?: SubmissionData
+  recentAcceptedSubmissions?: SubmissionData,
+  statusOverlay?: Record<string, string>,
+  dateRange?: DateRange,
 ): ReadinessData {
-  const recentAccepted = buildAcceptedSet(recentAcceptedSubmissions);
+  const recentAccepted = buildAcceptedSet(recentAcceptedSubmissions, statusOverlay, dateRange);
+
+  // When a date range filter is active, ignore `question.status` from LeetCode
+  // (it has no timestamp) and rely solely on the date-filtered accepted set.
+  const useStatusField = !dateRange;
 
   // Build Topic Points
   const topicPoints: Record<string, number> = {};
 
   allProblems.data.problemsetQuestionList.questions.forEach((question) => {
-    if (question.status === 'ac' || recentAccepted.has(question.titleSlug)) {
+    if ((useStatusField && question.status === 'ac') || recentAccepted.has(question.titleSlug)) {
       let points = 0.1;
       if (question.difficulty === 'Easy') {
         points = 0.4;
@@ -301,8 +337,10 @@ export async function getNextPracticeProblem(
   target: PracticeTarget
 ): Promise<string | null> {
   const allProblems = (await chrome.storage.local.get(['problemsKey'])).problemsKey as ProblemData;
+  const statusData = (await chrome.storage.local.get(['problemStatusKey'])).problemStatusKey as ProblemStatusData | undefined;
   const recentAccepted = buildAcceptedSet(
-    (await chrome.storage.local.get(['recentSubmissionsKey'])).recentSubmissionsKey as SubmissionData | undefined
+    (await chrome.storage.local.get(['recentSubmissionsKey'])).recentSubmissionsKey as SubmissionData | undefined,
+    statusData?.statuses
   );
   const userHasPremium = (
     (await chrome.storage.local.get(['userDataKey'])).userDataKey as { isPremium?: boolean } | undefined
@@ -417,7 +455,8 @@ export async function getPracticeProblem(
 ): Promise<string | null> {
   const allProblems = (await chrome.storage.local.get(['problemsKey'])).problemsKey as ProblemData;
   const { recentSubmissionsKey: recentAcceptedData } = await chrome.storage.local.get(['recentSubmissionsKey']) as { recentSubmissionsKey?: SubmissionData };
-  const recentAcceptedSet = buildAcceptedSet(recentAcceptedData);
+  const statusData = (await chrome.storage.local.get(['problemStatusKey'])).problemStatusKey as ProblemStatusData | undefined;
+  const recentAcceptedSet = buildAcceptedSet(recentAcceptedData, statusData?.statuses);
 
   if (practiceType === 'suggested') {
     const acceptedSet = new Set<string>();
@@ -433,7 +472,7 @@ export async function getPracticeProblem(
       }
     }
 
-    const readinessData = getReadinessData(allProblems, recentAcceptedData);
+    const readinessData = getReadinessData(allProblems, recentAcceptedData, statusData?.statuses);
 
     for (const topic of TARGET_TOPICS) {
       if (readinessData[topic][0] !== 'ready') {
@@ -475,7 +514,8 @@ export interface TopicAvailability {
 export function computeTopicAvailability(
   questions: Problem[],
   recentAccepted: Set<string>,
-  userHasPremium: boolean
+  userHasPremium: boolean,
+  dateRange?: DateRange,
 ): Record<string, TopicAvailability> {
   const availability: Record<string, TopicAvailability> = {};
 
@@ -491,10 +531,12 @@ export function computeTopicAvailability(
 
   if (!questions) return availability;
 
+  const useStatusField = !dateRange;
+
   for (const q of questions) {
     if (q.paidOnly && !userHasPremium) continue;
 
-    const solved = q.status === 'ac' || recentAccepted.has(q.titleSlug);
+    const solved = (useStatusField && q.status === 'ac') || recentAccepted.has(q.titleSlug);
 
     for (const tag of q.topicTags || []) {
       const topic = tag.slug;
@@ -529,7 +571,8 @@ export interface BigButtonStates {
 export function computeBigButtonStates(
   questions: Problem[],
   recentAccepted: Set<string>,
-  userHasPremium: boolean
+  userHasPremium: boolean,
+  dateRange?: DateRange,
 ): BigButtonStates {
   const states: BigButtonStates = {
     suggested: { hasUnsolved: false, label: 'Next Suggested Problem' },
@@ -538,6 +581,8 @@ export function computeBigButtonStates(
   };
 
   if (!questions) return states;
+
+  const useStatusField = !dateRange;
 
   // Check suggested list
   const bySlug = new Map<string, Problem>();
@@ -549,7 +594,7 @@ export function computeBigButtonStates(
     const q = bySlug.get(slug);
     if (!q) continue;
     if (q.paidOnly && !userHasPremium) continue;
-    const solved = q.status === 'ac' || recentAccepted.has(slug);
+    const solved = (useStatusField && q.status === 'ac') || recentAccepted.has(slug);
     if (!solved) {
       states.suggested.hasUnsolved = true;
       break;
@@ -567,7 +612,7 @@ export function computeBigButtonStates(
       TARGET_TOPICS.includes(t.slug as (typeof TARGET_TOPICS)[number])
     );
     if (!inTargetTopics) continue;
-    const solved = q.status === 'ac' || recentAccepted.has(q.titleSlug);
+    const solved = (useStatusField && q.status === 'ac') || recentAccepted.has(q.titleSlug);
     if (solved) {
       states.review.enabled = true;
       break;
