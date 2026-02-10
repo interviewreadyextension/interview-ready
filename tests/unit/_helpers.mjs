@@ -24,6 +24,12 @@ export function makeChromeStorage(initialData = {}) {
     set: async (items) => {
       Object.assign(data, items);
     },
+    remove: async (keys) => {
+      const list = Array.isArray(keys) ? keys : [keys];
+      for (const key of list) {
+        delete data[key];
+      }
+    },
     _dump: () => ({ ...data }),
   };
 }

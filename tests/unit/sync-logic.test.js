@@ -5,6 +5,7 @@ import {
   uninstallChromeStub,
 } from "./_helpers.mjs";
 import {
+  migrateStorageIfNeeded,
   updateProblems,
   updateSubmissions,
   validateChronologicalOrder,
@@ -85,25 +86,69 @@ function makeGraphQLFetchResponder(pages) {
       };
     }
 
-    const body = JSON.parse(options.body ?? "{}");
-    if (body.operationName === "submissionList") {
-      const offset = body.variables?.offset ?? 0;
-      const pageIndex = Math.floor(offset / 20);
-      const page = pages[pageIndex];
-      if (!page) {
-        throw new Error(`Unexpected submission page request at offset ${offset}`);
+    if (url === "https://leetcode.com/graphql/") {
+      const body = JSON.parse(options.body ?? "{}");
+      if (body.operationName === "submissionList") {
+        const offset = body.variables?.offset ?? 0;
+        const pageIndex = Math.floor(offset / 20);
+        const page = pages[pageIndex];
+        if (!page) {
+          throw new Error(`Unexpected submission page request at offset ${offset}`);
+        }
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          json: async () => page,
+        };
       }
-      return {
-        ok: true,
-        status: 200,
-        statusText: "OK",
-        json: async () => page,
-      };
     }
 
     throw new Error(`Unexpected fetch call to ${url}`);
   };
 }
+
+// ─── Migration tests ───────────────────────────────────────────────
+
+test("migrateStorageIfNeeded clears pre-migration caches", async () => {
+  const local = installChromeStub({
+    localData: {
+      problemsKey: { data: { problemsetQuestionList: { questions: [] } } },
+      recentSubmissionsKey: { data: { recentAcSubmissionList: [] } },
+    },
+  });
+
+  try {
+    const result = await migrateStorageIfNeeded();
+    assert.equal(result.migrated, true);
+    const stored = local._dump();
+    assert.equal(stored.problemsKey, undefined);
+    assert.equal(stored.recentSubmissionsKey, undefined);
+    assert.equal(stored._storageVersion, 1);
+  } finally {
+    uninstallChromeStub();
+  }
+});
+
+test("migrateStorageIfNeeded skips when version matches", async () => {
+  const local = installChromeStub({
+    localData: {
+      _storageVersion: 1,
+      problemsKey: { data: "keep me" },
+    },
+  });
+
+  try {
+    const result = await migrateStorageIfNeeded();
+    assert.equal(result.migrated, false);
+    const stored = local._dump();
+    assert.deepEqual(stored.problemsKey, { data: "keep me" });
+  } finally {
+    uninstallChromeStub();
+  }
+});
+
+// ─── Chronological validation ─────────────────────────────────────
 
 test("validateChronologicalOrder throws on ascending timestamps", () => {
   const submissions = [
@@ -133,6 +178,33 @@ test("updateProblems sets semaphore before fetch", async () => {
     const stored = await local.get(["problemsKey"]);
     assert.ok(stored.problemsKey.fetchCompletedAt);
     assert.equal(stored.problemsKey.source, "github");
+  } finally {
+    restoreFetch();
+    uninstallChromeStub();
+  }
+});
+
+test("updateProblems uses cached data when GitHub fails", async () => {
+  const cachedProblems = {
+    ...makeProblemsPayload(),
+    source: "github",
+    fetchStartedAt: 0,
+    fetchCompletedAt: 100,
+    timeStamp: 100,
+  };
+  const local = installChromeStub({ localData: { problemsKey: cachedProblems } });
+  const restoreFetch = installFetchMock(async (url) => {
+    return { ok: false, status: 404, statusText: "Not Found" };
+  });
+
+  try {
+    const result = await updateProblems({ githubRawUrl: problemsUrl });
+    assert.equal(result.usingCache, true);
+    // Cached data should still be intact
+    const stored = await local.get(["problemsKey"]);
+    assert.equal(stored.problemsKey.source, "github");
+    assert.equal(stored.problemsKey.fetchCompletedAt, 100);
+    assert.ok(stored.problemsKey.lastError);
   } finally {
     restoreFetch();
     uninstallChromeStub();
