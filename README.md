@@ -27,6 +27,8 @@ Everything syncs automatically in the background whenever you visit LeetCode. No
 3. Click the Interview Ready icon in your toolbar
 4. Your readiness dashboard appears — start practicing!
 
+**First launch:** The extension needs to load your full problem catalog and submission history. If you've solved a lot of problems, this can take 20–30 seconds. You'll see a progress bar, and the dashboard starts working as soon as enough data arrives. Subsequent opens are instant — everything caches locally.
+
 ## Data and Privacy
 
 All data stays within the extension on your machine. The only network calls are to LeetCode's own API — the same calls your browser makes when you use the site normally. Nothing is sent anywhere else.
