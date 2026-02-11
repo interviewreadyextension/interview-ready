@@ -9,7 +9,6 @@ import {
   computeBigButtonStates,
   getNextPracticeProblem,
   getPracticeProblem,
-  randomElementInArray,
   type ReadinessData,
   type TopicAvailability,
   type BigButtonStates,
@@ -239,44 +238,21 @@ export const App: FC = () => {
   // Handlers
   const handleTopicClick = useCallback(async (topic: string, target: PracticeTarget) => {
     try {
-      let slug = await getNextPracticeProblem(topic, target);
-      if (!slug) {
-        // Fallback: pick from solved problems
-        const allProblems = (await chrome.storage.local.get(['problemsKey'])).problemsKey as ProblemData;
-        const cache = (await chrome.storage.local.get(['submissionCacheKey'])).submissionCacheKey as SubmissionCacheData | undefined;
-        const recAccepted = buildAcceptedSet(cache);
-        const userPremium = ((await chrome.storage.local.get(['userDataKey'])).userDataKey as UserStatus | undefined)?.isPremium;
-        const qs = allProblems?.data?.problemsetQuestionList?.questions ?? [];
-
-        const difficultyFilter =
-          target === 'easy' || target === 'medium' || target === 'hard'
-            ? target.charAt(0).toUpperCase() + target.slice(1)
-            : null;
-
-        const solvedProblems: string[] = [];
-        for (const q of qs) {
-          if (!q.topicTags?.find((t) => t.slug === topic)) continue;
-          if (q.paidOnly && !userPremium) continue;
-          if (difficultyFilter && q.difficulty !== difficultyFilter) continue;
-          const solved = q.status === 'ac' || recAccepted.has(q.titleSlug);
-          if (solved) solvedProblems.push(q.titleSlug);
-        }
-        slug = randomElementInArray(solvedProblems);
-      }
+      const slug = await getNextPracticeProblem(topic, target, dateRange);
       if (slug) openProblem(slug);
     } catch (e) {
       delogError('Error selecting problem', e);
     }
-  }, []);
+  }, [dateRange]);
 
   const handleBigPracticeClick = useCallback(async (practiceType: BigPracticeMode) => {
     try {
-      const slug = await getPracticeProblem(practiceType);
+      const slug = await getPracticeProblem(practiceType, dateRange);
       if (slug) openProblem(slug);
     } catch (e) {
       delogError('Error selecting practice problem', e);
     }
-  }, []);
+  }, [dateRange]);
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);

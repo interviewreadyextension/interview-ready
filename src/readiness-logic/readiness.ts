@@ -1,9 +1,8 @@
 import type { Problem } from '../types/models';
 import type { ProblemData, SubmissionCacheData } from '../types/storage.types';
 
-/**
- * Target question counts per topic
- */
+// ─── Configuration ──────────────────────────────────────────────────
+
 export const TARGET_TOPIC_COUNTS: Record<string, number> = {
   'hash-table': 20,
   'string': 20,
@@ -19,48 +18,45 @@ export const TARGET_TOPIC_COUNTS: Record<string, number> = {
 };
 
 export const TARGET_TOPICS = [
-  'hash-table',
-  'string',
-  'linked-list',
-  'array',
-  'depth-first-search',
-  'breadth-first-search',
-  'binary-search',
-  'dynamic-programming',
-  'sorting',
-  'heap-priority-queue',
-  'queue',
+  'hash-table', 'string', 'linked-list', 'array',
+  'depth-first-search', 'breadth-first-search', 'binary-search',
+  'dynamic-programming', 'sorting', 'heap-priority-queue', 'queue',
 ] as const;
 
-const READINESS_TARGET_UPPER_AC_RATE = 60.0;
-const READINESS_TARGET_LOWER_AC_RATE = 40.0;
+const UPPER_AC_RATE = 60.0;
+const LOWER_AC_RATE = 40.0;
+
+// ─── Types ──────────────────────────────────────────────────────────
 
 export type ReadinessStatus = 'ready' | 'almost' | 'notReady';
-
-export interface TopicReadiness {
-  topic: string;
-  status: ReadinessStatus;
-  percentage: number;
-}
-
 export type ReadinessData = Record<string, [ReadinessStatus, number]>;
+export type PracticeTarget = 'suggested' | 'easy' | 'medium' | 'hard' | 'random';
+export type BigPracticeMode = 'suggested' | 'review' | 'random';
 
-/**
- * Date range for filtering which solved problems count toward readiness.
- * Timestamps are Unix seconds (matching LeetCode's submission timestamps).
- */
 export interface DateRange {
   startSec: number;
   endSec: number;
 }
 
+export interface TopicAvailability {
+  suggested: { total: number; unsolved: number };
+  easy: { total: number; unsolved: number };
+  medium: { total: number; unsolved: number };
+  hard: { total: number; unsolved: number };
+  random: { total: number; unsolved: number };
+}
+
+export interface BigButtonStates {
+  suggested: { hasUnsolved: boolean; label: string };
+  review: { enabled: boolean; label: string };
+  random: { hasUnsolved: boolean; label: string };
+}
+
+// ─── Core helpers ───────────────────────────────────────────────────
+
 /**
  * Build a set of accepted problem slugs from the submission cache.
- *
- * When `dateRange` is provided, only entries whose `latestAcceptedTimestamp`
- * falls within [startSec, endSec] are included. Because the cache stores
- * real per-problem timestamps, date filtering now works for ALL solved
- * problems — not just the ~20 most recent.
+ * When `dateRange` is provided, only entries with timestamps in range count.
  */
 export function buildAcceptedSet(
   cache?: SubmissionCacheData,
@@ -71,124 +67,87 @@ export function buildAcceptedSet(
 
   for (const [slug, entry] of Object.entries(cache.entries)) {
     if (!entry.solved) continue;
-
     if (dateRange) {
-      // With a date filter, we need a real timestamp to confirm the solve is in range.
-      // Entries with null timestamps are excluded — we can't prove they're in range.
       if (entry.latestAcceptedTimestamp === null) continue;
       if (entry.latestAcceptedTimestamp < dateRange.startSec
-        || entry.latestAcceptedTimestamp > dateRange.endSec) {
-        continue;
-      }
+        || entry.latestAcceptedTimestamp > dateRange.endSec) continue;
     }
-
     accepted.add(slug);
   }
-
   return accepted;
 }
 
 /**
- * Calculate readiness data for all target topics.
+ * Check if a problem is "solved" in the current context.
  *
- * Primary source: the submission cache (`buildAcceptedSet`).
- * Fallback: when cache is still building and no entry exists for a problem,
- * `question.status === 'ac'` is used as a best-effort indicator (all-time
- * only — the status field has no timestamp for date filtering).
+ * Uses the cache-derived accepted set first, then falls back to
+ * `question.status === 'ac'` when no date filter is active and no
+ * cache entry exists yet (the status field has no timestamp).
  */
-export function getReadinessData(
-  allProblems: ProblemData,
-  submissionCache?: SubmissionCacheData,
-  dateRange?: DateRange,
-): ReadinessData {
-  const cacheAccepted = buildAcceptedSet(submissionCache, dateRange);
-
-  // Use the status field as a fallback only when:
-  //   1. No date range filter is active (status has no timestamp), AND
-  //   2. The cache entry for this problem doesn't exist yet
-  const allowStatusFallback = !dateRange;
-  const cacheEntries = submissionCache?.entries ?? {};
-
-  // Build Topic Points
-  const topicPoints: Record<string, number> = {};
-
-  allProblems.data.problemsetQuestionList.questions.forEach((question) => {
-    // A problem is "solved" if:
-    //   1. It’s in the cache-derived accepted set, OR
-    //   2. Fallback: status === 'ac' and we have no cache entry yet (all-time only)
-    const inCache = cacheAccepted.has(question.titleSlug);
-    const statusFallback = allowStatusFallback
-      && question.status === 'ac'
-      && !cacheEntries[question.titleSlug];
-
-    if (inCache || statusFallback) {
-      let points = 0.1;
-      if (question.difficulty === 'Easy') {
-        points = 0.4;
-      } else if (
-        question.difficulty === 'Medium' &&
-        question.acRate >= READINESS_TARGET_UPPER_AC_RATE
-      ) {
-        points = 0.75;
-      } else if (
-        question.difficulty === 'Medium' &&
-        question.acRate < READINESS_TARGET_UPPER_AC_RATE &&
-        question.acRate > READINESS_TARGET_LOWER_AC_RATE
-      ) {
-        points = 1;
-      } else if (question.difficulty === 'Medium') {
-        points = 1.5;
-      } else if (question.difficulty === 'Hard') {
-        points = 2;
-      }
-
-      for (const tag of question.topicTags) {
-        const topic = tag.slug;
-        if (!topicPoints[topic]) {
-          topicPoints[topic] = 0;
-        }
-        topicPoints[topic] += points;
-      }
-    }
-  });
-
-  // Normalize and classify
-  const readinessData: ReadinessData = {};
-
-  // Initialize all target topics as not ready
-  TARGET_TOPICS.forEach((topic) => {
-    readinessData[topic] = ['notReady', 0.0];
-  });
-
-  Object.entries(topicPoints).forEach(([topic, readinessScore]) => {
-    if (TARGET_TOPICS.includes(topic as (typeof TARGET_TOPICS)[number])) {
-      const normalizedReadinessScore = readinessScore / TARGET_TOPIC_COUNTS[topic];
-      const readinessScoreFormattedAsPercent = 100.0 * normalizedReadinessScore;
-
-      if (normalizedReadinessScore >= 1.0) {
-        readinessData[topic] = ['ready', readinessScoreFormattedAsPercent];
-      } else if (normalizedReadinessScore > 0.7) {
-        readinessData[topic] = ['almost', readinessScoreFormattedAsPercent];
-      } else {
-        readinessData[topic] = ['notReady', readinessScoreFormattedAsPercent];
-      }
-    }
-  });
-
-  return readinessData;
+function isSolved(
+  slug: string,
+  status: string | null,
+  accepted: Set<string>,
+  allowStatusFallback: boolean,
+  cacheEntries: Record<string, unknown>,
+): boolean {
+  return accepted.has(slug)
+    || (allowStatusFallback && status === 'ac' && !(slug in cacheEntries));
 }
 
-/**
- * Random element from array
- */
 export function randomElementInArray<T>(arr: T[]): T | null {
   if (!arr || arr.length === 0) return null;
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
 /**
- * Recommended problem list
+ * Points for a solved problem based on difficulty and acceptance rate.
+ * Harder problems are worth more points toward readiness.
  */
+function solvedPoints(q: Problem): number {
+  if (q.difficulty === 'Easy') return 0.4;
+  if (q.difficulty === 'Hard') return 2;
+  // Medium — graduated by acceptance rate
+  if (q.acRate >= UPPER_AC_RATE) return 0.75;
+  if (q.acRate > LOWER_AC_RATE) return 1;
+  return 1.5;
+}
+
+// ─── Readiness calculation ──────────────────────────────────────────
+
+export function getReadinessData(
+  allProblems: ProblemData,
+  submissionCache?: SubmissionCacheData,
+  dateRange?: DateRange,
+): ReadinessData {
+  const accepted = buildAcceptedSet(submissionCache, dateRange);
+  const allowFallback = !dateRange;
+  const entries = submissionCache?.entries ?? {};
+
+  // Accumulate points per topic
+  const topicPoints: Record<string, number> = {};
+  for (const q of allProblems.data.problemsetQuestionList.questions) {
+    if (!isSolved(q.titleSlug, q.status, accepted, allowFallback, entries)) continue;
+    const pts = solvedPoints(q);
+    for (const tag of q.topicTags) {
+      topicPoints[tag.slug] = (topicPoints[tag.slug] ?? 0) + pts;
+    }
+  }
+
+  // Normalize into readiness statuses
+  const data: ReadinessData = {};
+  for (const topic of TARGET_TOPICS) {
+    const normalized = (topicPoints[topic] ?? 0) / TARGET_TOPIC_COUNTS[topic];
+    const pct = normalized * 100;
+    const status: ReadinessStatus =
+      normalized >= 1.0 ? 'ready' : normalized > 0.7 ? 'almost' : 'notReady';
+    data[topic] = [status, pct];
+  }
+  return data;
+}
+
+// ─── Recommended problem list ───────────────────────────────────────
+
 export const recommendedList: string[] = [
   'find-first-palindromic-string-in-the-array',
   'valid-palindrome',
@@ -340,206 +299,174 @@ export const recommendedList: string[] = [
 
 export const recommendedSet = new Set(recommendedList);
 
-export type PracticeTarget = 'suggested' | 'easy' | 'medium' | 'hard' | 'random';
+// ─── Problem classification ─────────────────────────────────────────
+
+interface ClassifiedProblems {
+  unsolved: {
+    easy: string[];
+    medEasy: string[];   // acRate >= UPPER_AC_RATE
+    medTarget: string[]; // LOWER_AC_RATE < acRate < UPPER_AC_RATE
+    medHard: string[];   // acRate <= LOWER_AC_RATE
+    hard: string[];
+    all: string[];
+  };
+  solved: {
+    easy: string[];
+    medium: string[];
+    hard: string[];
+    all: string[];
+  };
+}
+
+/**
+ * Classify problems for a topic into solved/unsolved difficulty buckets.
+ */
+function classifyProblems(
+  questions: Problem[],
+  topic: string,
+  accepted: Set<string>,
+  isPremium: boolean,
+): ClassifiedProblems {
+  const unsolved = { easy: [] as string[], medEasy: [] as string[], medTarget: [] as string[], medHard: [] as string[], hard: [] as string[], all: [] as string[] };
+  const solved = { easy: [] as string[], medium: [] as string[], hard: [] as string[], all: [] as string[] };
+
+  for (const q of questions) {
+    if (!q.topicTags.some(t => t.slug === topic)) continue;
+    if (q.paidOnly && !isPremium) continue;
+
+    if (accepted.has(q.titleSlug)) {
+      solved.all.push(q.titleSlug);
+      const key = q.difficulty.toLowerCase() as 'easy' | 'medium' | 'hard';
+      solved[key].push(q.titleSlug);
+    } else {
+      unsolved.all.push(q.titleSlug);
+      if (q.difficulty === 'Easy') unsolved.easy.push(q.titleSlug);
+      else if (q.difficulty === 'Hard') unsolved.hard.push(q.titleSlug);
+      else if (q.acRate >= UPPER_AC_RATE) unsolved.medEasy.push(q.titleSlug);
+      else if (q.acRate > LOWER_AC_RATE) unsolved.medTarget.push(q.titleSlug);
+      else unsolved.medHard.push(q.titleSlug);
+    }
+  }
+
+  return { unsolved, solved };
+}
+
+// ─── Practice problem selection ─────────────────────────────────────
+
+/** Pick from `arr`, preferring items in the recommended set. */
+function preferRecommended(arr: string[]): string | null {
+  const preferred = arr.filter(s => recommendedSet.has(s));
+  return randomElementInArray(preferred.length > 2 ? preferred : arr);
+}
 
 /**
  * Get the next practice problem for a given topic and difficulty target.
- *
- * Reads problem + submission data from chrome.storage.local directly
- * so the popup can call this without prop-drilling all data.
+ * Pass `dateRange` so "solved" respects the active date filter.
  */
 export async function getNextPracticeProblem(
   topic: string,
-  target: PracticeTarget
+  target: PracticeTarget,
+  dateRange?: DateRange,
 ): Promise<string | null> {
-  const allProblems = (await chrome.storage.local.get(['problemsKey'])).problemsKey as ProblemData;
-  const cache = (await chrome.storage.local.get(['submissionCacheKey'])).submissionCacheKey as SubmissionCacheData | undefined;
-  const recentAccepted = buildAcceptedSet(cache);
-  const userHasPremium = (
-    (await chrome.storage.local.get(['userDataKey'])).userDataKey as { isPremium?: boolean } | undefined
-  )?.isPremium;
+  const store = await chrome.storage.local.get(['problemsKey', 'submissionCacheKey', 'userDataKey']);
+  const problems = (store.problemsKey as ProblemData).data.problemsetQuestionList.questions;
+  const cache = store.submissionCacheKey as SubmissionCacheData | undefined;
+  const isPremium = (store.userDataKey as { isPremium?: boolean } | undefined)?.isPremium ?? false;
+  const accepted = buildAcceptedSet(cache, dateRange);
 
-  const unsolvedProblemsMediumMoreDifficultThanTarget: string[] = [];
-  const unsolvedProblemsMediumAtTarget: string[] = [];
-  const unsolvedProblemsMediumEasierThanTarget: string[] = [];
-  const unsolvedProblemsHard: string[] = [];
-  const unsolvedProblemsEasy: string[] = [];
-  const solvedByDifficulty: Record<string, string[]> = { Easy: [], Medium: [], Hard: [] };
-  const solvedProblems: string[] = [];
-  const unsolvedProblems: string[] = [];
+  const { unsolved, solved } = classifyProblems(problems, topic, accepted, isPremium);
 
-  allProblems.data.problemsetQuestionList.questions.forEach((question) => {
-    const relatedToTargetTopic = question.topicTags.find((t) => t.slug === topic);
-    if (relatedToTargetTopic && (!question.paidOnly || userHasPremium)) {
-      if (question.status !== 'ac' && !recentAccepted.has(question.titleSlug)) {
-        unsolvedProblems.push(question.titleSlug);
-        if (question.difficulty === 'Easy') {
-          unsolvedProblemsEasy.push(question.titleSlug);
-        } else if (
-          question.difficulty === 'Medium' &&
-          question.acRate >= READINESS_TARGET_UPPER_AC_RATE
-        ) {
-          unsolvedProblemsMediumEasierThanTarget.push(question.titleSlug);
-        } else if (
-          question.difficulty === 'Medium' &&
-          question.acRate < READINESS_TARGET_UPPER_AC_RATE &&
-          question.acRate > READINESS_TARGET_LOWER_AC_RATE
-        ) {
-          unsolvedProblemsMediumAtTarget.push(question.titleSlug);
-        } else if (question.difficulty === 'Medium') {
-          unsolvedProblemsMediumMoreDifficultThanTarget.push(question.titleSlug);
-        } else if (question.difficulty === 'Hard') {
-          unsolvedProblemsHard.push(question.titleSlug);
-        }
-      } else {
-        solvedProblems.push(question.titleSlug);
-        if (solvedByDifficulty[question.difficulty]) {
-          solvedByDifficulty[question.difficulty].push(question.titleSlug);
-        }
-      }
-    }
-  });
-
-  const preferredElementInArray = (arr: string[]): string | null => {
-    const filteredArr = arr.filter((item) => recommendedSet.has(item));
-    const targetArray = filteredArr.length > 2 ? filteredArr : arr;
-    return randomElementInArray(targetArray);
-  };
-
-  if (target === 'easy') {
-    return unsolvedProblemsEasy.length > 0
-      ? randomElementInArray(unsolvedProblemsEasy)
-      : randomElementInArray(solvedByDifficulty['Easy']);
-  } else if (target === 'medium') {
-    if (unsolvedProblemsMediumAtTarget.length > 0) {
-      return randomElementInArray(unsolvedProblemsMediumAtTarget);
-    } else if (unsolvedProblemsMediumEasierThanTarget.length > 0) {
-      return randomElementInArray(unsolvedProblemsMediumEasierThanTarget);
-    } else if (unsolvedProblemsMediumMoreDifficultThanTarget.length > 0) {
-      return randomElementInArray(unsolvedProblemsMediumMoreDifficultThanTarget);
-    } else {
-      return randomElementInArray(solvedByDifficulty['Medium']);
-    }
-  } else if (target === 'hard') {
-    return unsolvedProblemsHard.length > 0
-      ? randomElementInArray(unsolvedProblemsHard)
-      : randomElementInArray(solvedByDifficulty['Hard']);
-  } else if (target === 'random') {
-    return unsolvedProblems.length > 0
-      ? randomElementInArray(unsolvedProblems)
-      : randomElementInArray(solvedProblems);
+  switch (target) {
+    case 'easy':
+      return randomElementInArray(unsolved.easy) ?? randomElementInArray(solved.easy);
+    case 'medium':
+      return randomElementInArray(unsolved.medTarget)
+        ?? randomElementInArray(unsolved.medEasy)
+        ?? randomElementInArray(unsolved.medHard)
+        ?? randomElementInArray(solved.medium);
+    case 'hard':
+      return randomElementInArray(unsolved.hard) ?? randomElementInArray(solved.hard);
+    case 'random':
+      return randomElementInArray(unsolved.all) ?? randomElementInArray(solved.all);
+    default: // 'suggested'
+      break;
   }
 
-  // Default "suggested" mode: progressive difficulty recommendation
-  const numberOfEasyProblemsFirst = Math.min(10, unsolvedProblemsEasy.length);
-  const numberOfBeforeTargetFirst = Math.min(
-    15,
-    unsolvedProblemsEasy.length + unsolvedProblemsMediumEasierThanTarget.length
-  );
+  // Suggested mode: progressive difficulty
+  const easyFirst = Math.min(10, unsolved.easy.length);
+  const beforeTarget = Math.min(15, unsolved.easy.length + unsolved.medEasy.length);
 
-  if (numberOfEasyProblemsFirst > solvedProblems.length) {
-    return preferredElementInArray(unsolvedProblemsEasy);
-  } else if (numberOfBeforeTargetFirst > solvedProblems.length) {
-    return preferredElementInArray(unsolvedProblemsMediumEasierThanTarget);
-  }
+  if (easyFirst > solved.all.length) return preferRecommended(unsolved.easy);
+  if (beforeTarget > solved.all.length) return preferRecommended(unsolved.medEasy);
 
-  if (unsolvedProblemsMediumAtTarget.length > 0) {
-    return preferredElementInArray(unsolvedProblemsMediumAtTarget);
-  } else if (unsolvedProblemsMediumEasierThanTarget.length > 0) {
-    return preferredElementInArray(unsolvedProblemsMediumEasierThanTarget);
-  } else if (unsolvedProblemsMediumMoreDifficultThanTarget.length > 0) {
-    return preferredElementInArray(unsolvedProblemsMediumMoreDifficultThanTarget);
-  } else if (unsolvedProblemsHard.length > 0) {
-    return preferredElementInArray(unsolvedProblemsHard);
-  } else if (unsolvedProblemsEasy.length > 0) {
-    return preferredElementInArray(unsolvedProblemsEasy);
-  }
-
-  return preferredElementInArray(solvedProblems);
+  return preferRecommended(unsolved.medTarget)
+    ?? preferRecommended(unsolved.medEasy)
+    ?? preferRecommended(unsolved.medHard)
+    ?? preferRecommended(unsolved.hard)
+    ?? preferRecommended(unsolved.easy)
+    ?? preferRecommended(solved.all);
 }
-
-export type BigPracticeMode = 'suggested' | 'review' | 'random';
 
 /**
  * Get a practice problem by high-level mode (suggested / review / random).
- *
- * Reads from chrome.storage.local directly — the popup calls this
- * as a one-shot action when the user clicks a button.
+ * Pass `dateRange` so "solved" respects the active date filter.
  */
 export async function getPracticeProblem(
-  practiceType: BigPracticeMode
+  practiceType: BigPracticeMode,
+  dateRange?: DateRange,
 ): Promise<string | null> {
-  const allProblems = (await chrome.storage.local.get(['problemsKey'])).problemsKey as ProblemData;
-  const cache = (await chrome.storage.local.get(['submissionCacheKey'])).submissionCacheKey as SubmissionCacheData | undefined;
-  const recentAcceptedSet = buildAcceptedSet(cache);
+  const store = await chrome.storage.local.get(['problemsKey', 'submissionCacheKey']);
+  const allProblems = store.problemsKey as ProblemData;
+  const cache = store.submissionCacheKey as SubmissionCacheData | undefined;
+  const accepted = buildAcceptedSet(cache, dateRange);
+  const allowFallback = !dateRange;
+  const entries = cache?.entries ?? {};
+  const questions = allProblems.data.problemsetQuestionList.questions;
 
   if (practiceType === 'suggested') {
-    const acceptedSet = new Set<string>();
-    allProblems.data.problemsetQuestionList.questions.forEach((question) => {
-      if (question.status === 'ac' || recentAcceptedSet.has(question.titleSlug)) {
-        acceptedSet.add(question.titleSlug);
-      }
-    });
-
+    // First: find the next unfinished recommended problem
+    const bySlug = new Map(questions.map(q => [q.titleSlug, q]));
     for (const slug of recommendedList) {
-      if (!acceptedSet.has(slug)) {
+      const q = bySlug.get(slug);
+      if (q && !isSolved(slug, q.status, accepted, allowFallback, entries)) {
         return slug;
       }
     }
-
-    const readinessData = getReadinessData(allProblems, cache);
-
+    // All recommended done — find first non-ready topic
+    const readiness = getReadinessData(allProblems, cache, dateRange);
     for (const topic of TARGET_TOPICS) {
-      if (readinessData[topic][0] !== 'ready') {
-        return await getNextPracticeProblem(topic, 'suggested');
+      if (readiness[topic][0] !== 'ready') {
+        return getNextPracticeProblem(topic, 'suggested', dateRange);
       }
     }
   } else if (practiceType === 'review') {
-    const acceptedList: string[] = [];
-    allProblems.data.problemsetQuestionList.questions.forEach((question) => {
-      if (question.status === 'ac' || recentAcceptedSet.has(question.titleSlug)) {
-        acceptedList.push(question.titleSlug);
-      }
-    });
-
-    if (acceptedList.length === 0) return null;
-    return randomElementInArray(acceptedList);
+    const solvedList = questions
+      .filter(q =>
+        isSolved(q.titleSlug, q.status, accepted, allowFallback, entries)
+        && q.topicTags?.some(t => TARGET_TOPICS.includes(t.slug as (typeof TARGET_TOPICS)[number]))
+      )
+      .map(q => q.titleSlug);
+    return randomElementInArray(solvedList);
   } else if (practiceType === 'random') {
-    const randomTopic = randomElementInArray([...TARGET_TOPICS]) ?? TARGET_TOPICS[0];
-    return getNextPracticeProblem(randomTopic, 'suggested');
+    const topic = randomElementInArray([...TARGET_TOPICS]) ?? TARGET_TOPICS[0];
+    return getNextPracticeProblem(topic, 'suggested', dateRange);
   }
 
   return null;
 }
 
-/**
- * Topic availability data for button state
- */
-export interface TopicAvailability {
-  suggested: { total: number; unsolved: number };
-  easy: { total: number; unsolved: number };
-  medium: { total: number; unsolved: number };
-  hard: { total: number; unsolved: number };
-  random: { total: number; unsolved: number };
-}
+// ─── Topic availability (for button states) ─────────────────────────
 
-/**
- * Compute availability of problems by topic and difficulty.
- *
- * `recentAccepted` is the set from `buildAcceptedSet(cache, dateRange)`.
- * `cacheEntries` is passed so the status-fallback logic stays consistent.
- */
 export function computeTopicAvailability(
   questions: Problem[],
-  recentAccepted: Set<string>,
-  userHasPremium: boolean,
+  accepted: Set<string>,
+  isPremium: boolean,
   dateRange?: DateRange,
   cacheEntries?: Record<string, { solved: boolean }>,
 ): Record<string, TopicAvailability> {
-  const availability: Record<string, TopicAvailability> = {};
-
+  const avail: Record<string, TopicAvailability> = {};
   for (const topic of TARGET_TOPICS) {
-    availability[topic] = {
+    avail[topic] = {
       suggested: { total: 0, unsolved: 0 },
       easy: { total: 0, unsolved: 0 },
       medium: { total: 0, unsolved: 0 },
@@ -547,53 +474,37 @@ export function computeTopicAvailability(
       random: { total: 0, unsolved: 0 },
     };
   }
+  if (!questions) return avail;
 
-  if (!questions) return availability;
-
-  const allowStatusFallback = !dateRange;
+  const allowFallback = !dateRange;
   const entries = cacheEntries ?? {};
 
   for (const q of questions) {
-    if (q.paidOnly && !userHasPremium) continue;
-
-    const inCache = recentAccepted.has(q.titleSlug);
-    const statusFallback = allowStatusFallback && q.status === 'ac' && !entries[q.titleSlug];
-    const solved = inCache || statusFallback;
+    if (q.paidOnly && !isPremium) continue;
+    const solved = isSolved(q.titleSlug, q.status, accepted, allowFallback, entries);
 
     for (const tag of q.topicTags || []) {
-      const topic = tag.slug;
-      if (!availability[topic]) continue;
+      const a = avail[tag.slug];
+      if (!a) continue;
 
       const diff = q.difficulty?.toLowerCase() as 'easy' | 'medium' | 'hard';
       if (diff === 'easy' || diff === 'medium' || diff === 'hard') {
-        availability[topic][diff].total++;
-        if (!solved) availability[topic][diff].unsolved++;
+        a[diff].total++;
+        if (!solved) a[diff].unsolved++;
       }
-
-      availability[topic].suggested.total++;
-      if (!solved) availability[topic].suggested.unsolved++;
-
-      availability[topic].random.total++;
-      if (!solved) availability[topic].random.unsolved++;
+      a.suggested.total++;
+      if (!solved) a.suggested.unsolved++;
+      a.random.total++;
+      if (!solved) a.random.unsolved++;
     }
   }
-
-  return availability;
-}
-
-/**
- * Big button states
- */
-export interface BigButtonStates {
-  suggested: { hasUnsolved: boolean; label: string };
-  review: { enabled: boolean; label: string };
-  random: { hasUnsolved: boolean; label: string };
+  return avail;
 }
 
 export function computeBigButtonStates(
   questions: Problem[],
-  recentAccepted: Set<string>,
-  userHasPremium: boolean,
+  accepted: Set<string>,
+  isPremium: boolean,
   dateRange?: DateRange,
   cacheEntries?: Record<string, { solved: boolean }>,
 ): BigButtonStates {
@@ -602,44 +513,30 @@ export function computeBigButtonStates(
     review: { enabled: false, label: 'Review Random Completed' },
     random: { hasUnsolved: true, label: 'Solve Random Problem' },
   };
-
   if (!questions) return states;
 
-  const allowStatusFallback = !dateRange;
+  const allowFallback = !dateRange;
   const entries = cacheEntries ?? {};
+  const bySlug = new Map(questions.map(q => [q.titleSlug, q]));
 
-  // Check suggested list
-  const bySlug = new Map<string, Problem>();
-  for (const q of questions) {
-    bySlug.set(q.titleSlug, q);
-  }
-
+  // Check suggested list for unsolved
   for (const slug of recommendedList) {
     const q = bySlug.get(slug);
-    if (!q) continue;
-    if (q.paidOnly && !userHasPremium) continue;
-    const inCache = recentAccepted.has(slug);
-    const statusFallback = allowStatusFallback && q.status === 'ac' && !entries[slug];
-    if (!inCache && !statusFallback) {
+    if (!q || (q.paidOnly && !isPremium)) continue;
+    if (!isSolved(slug, q.status, accepted, allowFallback, entries)) {
       states.suggested.hasUnsolved = true;
       break;
     }
   }
-
   if (!states.suggested.hasUnsolved) {
     states.suggested.label = 'Solve Random Problem';
   }
 
-  // Check review
+  // Check review availability
   for (const q of questions) {
-    if (q.paidOnly && !userHasPremium) continue;
-    const inTargetTopics = q.topicTags?.some((t) =>
-      TARGET_TOPICS.includes(t.slug as (typeof TARGET_TOPICS)[number])
-    );
-    if (!inTargetTopics) continue;
-    const inCache = recentAccepted.has(q.titleSlug);
-    const statusFallback = allowStatusFallback && q.status === 'ac' && !entries[q.titleSlug];
-    if (inCache || statusFallback) {
+    if (q.paidOnly && !isPremium) continue;
+    if (!q.topicTags?.some(t => TARGET_TOPICS.includes(t.slug as (typeof TARGET_TOPICS)[number]))) continue;
+    if (isSolved(q.titleSlug, q.status, accepted, allowFallback, entries)) {
       states.review.enabled = true;
       break;
     }
