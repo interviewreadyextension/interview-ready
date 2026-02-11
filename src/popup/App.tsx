@@ -74,10 +74,12 @@ export const App: FC = () => {
         'userDataKey',
         'problemsKey',
         'submissionCacheKey',
-      ]) as { userDataKey?: UserStatus; problemsKey?: ProblemData; submissionCacheKey?: SubmissionCacheData };
+        'dateFilterPreference',
+      ]) as { userDataKey?: UserStatus; problemsKey?: ProblemData; submissionCacheKey?: SubmissionCacheData; dateFilterPreference?: DateFilterPreset };
       setUserData(result.userDataKey);
       setProblemData(result.problemsKey);
       setCacheData(result.submissionCacheKey);
+      setDateFilter(result.dateFilterPreference ?? '120d');
       setLoading(false);
 
       // Signal popup opened → triggers submission sync in the content script
@@ -98,6 +100,11 @@ export const App: FC = () => {
     chrome.storage.onChanged.addListener(listener);
     return () => chrome.storage.onChanged.removeListener(listener);
   }, []);
+
+  // Persist date filter preference
+  useEffect(() => {
+    chrome.storage.local.set({ dateFilterPreference: dateFilter });
+  }, [dateFilter]);
 
   // ─── Derived data ──────────────────────────────────────────
   const dateRange = useMemo(() => getDateRange(dateFilter), [dateFilter]);

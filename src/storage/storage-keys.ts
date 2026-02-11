@@ -12,6 +12,7 @@ export const STORAGE_KEYS = {
   submissionCache: 'submissionCacheKey',
   submissions: 'recentSubmissionsKey',      // legacy — kept for migration
   userData: 'userDataKey',
+  dateFilterPreference: 'dateFilterPreference',
   version: '_storageVersion',
   refreshTrigger: 'refresh_problems',
   modalTrigger: 'modal_opened',
