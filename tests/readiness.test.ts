@@ -1,4 +1,4 @@
-import { describe, test, expect, afterEach, vi } from 'vitest';
+import { describe, test, expect } from 'vitest';
 import {
   getReadinessData,
   buildAcceptedSet,
@@ -10,8 +10,6 @@ import {
   TARGET_TOPIC_COUNTS,
 } from '../src/readiness-logic/readiness';
 import {
-  installChromeStub,
-  uninstallChromeStub,
   makeAllProblems,
   makeCacheData,
   makeCacheEntry,
@@ -160,85 +158,63 @@ describe('getReadinessData', () => {
 // ─── getNextPracticeProblem ────────────────────────────────────────
 
 describe('getNextPracticeProblem', () => {
-  test('excludes problems in submission cache', async () => {
+  test('excludes problems in submission cache', () => {
     const restoreRandom = Math.random;
     Math.random = () => 0;
 
-    installChromeStub({
-      localData: {
-        problemsKey: makeAllProblems([
-          q({ titleSlug: 'recently-solved', difficulty: 'Easy', status: null, topicSlugs: ['array'] }),
-          q({ titleSlug: 'still-unsolved', difficulty: 'Easy', status: null, topicSlugs: ['array'] }),
-        ]),
-        submissionCacheKey: makeCacheData({
-          'recently-solved': makeCacheEntry({ solved: true }),
-        }),
-        userDataKey: { isPremium: false },
-      },
-    });
+    const questions = [
+      q({ titleSlug: 'recently-solved', difficulty: 'Easy', status: null, topicSlugs: ['array'] }),
+      q({ titleSlug: 'still-unsolved', difficulty: 'Easy', status: null, topicSlugs: ['array'] }),
+    ];
+    const cache = makeCacheData({ 'recently-solved': makeCacheEntry({ solved: true }) });
 
     try {
-      const slug = await getNextPracticeProblem('array', 'easy');
+      const slug = getNextPracticeProblem('array', 'easy', questions, cache, false);
       expect(slug).toBe('still-unsolved');
     } finally {
       Math.random = restoreRandom;
     }
   });
 
-  test('never returns paid-only problems for non-premium users', async () => {
+  test('never returns paid-only problems for non-premium users', () => {
     const restoreRandom = Math.random;
     Math.random = () => 0;
 
-    installChromeStub({
-      localData: {
-        problemsKey: makeAllProblems([
-          q({ titleSlug: 'paid', difficulty: 'Easy', status: null, paidOnly: true, topicSlugs: ['array'] }),
-          q({ titleSlug: 'free', difficulty: 'Easy', status: null, paidOnly: false, topicSlugs: ['array'] }),
-        ]),
-        submissionCacheKey: makeCacheData(),
-        userDataKey: { isPremium: false },
-      },
-    });
+    const questions = [
+      q({ titleSlug: 'paid', difficulty: 'Easy', status: null, paidOnly: true, topicSlugs: ['array'] }),
+      q({ titleSlug: 'free', difficulty: 'Easy', status: null, paidOnly: false, topicSlugs: ['array'] }),
+    ];
+    const cache = makeCacheData();
 
     try {
-      const slug = await getNextPracticeProblem('array', 'easy');
+      const slug = getNextPracticeProblem('array', 'easy', questions, cache, false);
       expect(slug).toBe('free');
     } finally {
       Math.random = restoreRandom;
     }
   });
 
-  test('returns null when there are no eligible problems', async () => {
-    installChromeStub({
-      localData: {
-        problemsKey: makeAllProblems([
-          q({ titleSlug: 'paid', difficulty: 'Easy', status: null, paidOnly: true, topicSlugs: ['array'] }),
-        ]),
-        submissionCacheKey: makeCacheData(),
-        userDataKey: { isPremium: false },
-      },
-    });
+  test('returns null when there are no eligible problems', () => {
+    const questions = [
+      q({ titleSlug: 'paid', difficulty: 'Easy', status: null, paidOnly: true, topicSlugs: ['array'] }),
+    ];
+    const cache = makeCacheData();
 
-    const slug = await getNextPracticeProblem('array', 'easy');
+    const slug = getNextPracticeProblem('array', 'easy', questions, cache, false);
     expect(slug).toBe(null);
   });
 
-  test('must not return null when eligible problems exist', async () => {
+  test('must not return null when eligible problems exist', () => {
     const restoreRandom = Math.random;
     Math.random = () => 0;
 
-    installChromeStub({
-      localData: {
-        problemsKey: makeAllProblems([
-          q({ titleSlug: 'valid-problem', difficulty: 'Easy', status: null, topicSlugs: ['array'] }),
-        ]),
-        submissionCacheKey: makeCacheData(),
-        userDataKey: { isPremium: false },
-      },
-    });
+    const questions = [
+      q({ titleSlug: 'valid-problem', difficulty: 'Easy', status: null, topicSlugs: ['array'] }),
+    ];
+    const cache = makeCacheData();
 
     try {
-      const slug = await getNextPracticeProblem('array', 'suggested');
+      const slug = getNextPracticeProblem('array', 'suggested', questions, cache, false);
       expect(slug).not.toBe(null);
       expect(typeof slug).toBe('string');
     } finally {
@@ -250,93 +226,67 @@ describe('getNextPracticeProblem', () => {
 // ─── getPracticeProblem ────────────────────────────────────────────
 
 describe('getPracticeProblem', () => {
-  test('suggested: returns first recommended slug not yet accepted', async () => {
+  test('suggested: returns first recommended slug not yet accepted', () => {
     const accepted = new Set(recommendedList.slice(0, 3));
     const allQuestions = recommendedList.slice(0, 5).map((slug) =>
       q({ titleSlug: slug, status: accepted.has(slug) ? 'ac' : null, difficulty: 'Easy', topicSlugs: ['array'] })
     );
+    const problemData = makeAllProblems(allQuestions);
+    const cache = makeCacheData();
 
-    installChromeStub({
-      localData: {
-        problemsKey: makeAllProblems(allQuestions),
-        submissionCacheKey: makeCacheData(),
-        userDataKey: { isPremium: false },
-      },
-    });
-
-    const slug = await getPracticeProblem('suggested');
+    const slug = getPracticeProblem('suggested', problemData, cache, false);
     expect(slug).toBe(recommendedList[3]);
   });
 
-  test('review: returns null when nothing accepted', async () => {
-    installChromeStub({
-      localData: {
-        problemsKey: makeAllProblems([
-          q({ titleSlug: 'a', status: null, difficulty: 'Easy', topicSlugs: ['array'] }),
-        ]),
-        submissionCacheKey: makeCacheData(),
-        userDataKey: { isPremium: false },
-      },
-    });
+  test('review: returns null when nothing accepted', () => {
+    const problemData = makeAllProblems([
+      q({ titleSlug: 'a', status: null, difficulty: 'Easy', topicSlugs: ['array'] }),
+    ]);
+    const cache = makeCacheData();
 
-    const slug = await getPracticeProblem('review');
+    const slug = getPracticeProblem('review', problemData, cache, false);
     expect(slug).toBe(null);
   });
 
-  test('review: reads from submissionCacheKey', async () => {
-    installChromeStub({
-      localData: {
-        problemsKey: makeAllProblems([
-          q({ titleSlug: 'two-sum', status: null, difficulty: 'Easy', topicSlugs: ['array'] }),
-        ]),
-        submissionCacheKey: makeCacheData({
-          'two-sum': makeCacheEntry({ solved: true, latestAcceptedTimestamp: 1 }),
-        }),
-        userDataKey: { isPremium: false },
-      },
+  test('review: reads from submissionCacheKey', () => {
+    const problemData = makeAllProblems([
+      q({ titleSlug: 'two-sum', status: null, difficulty: 'Easy', topicSlugs: ['array'] }),
+    ]);
+    const cache = makeCacheData({
+      'two-sum': makeCacheEntry({ solved: true, latestAcceptedTimestamp: 1 }),
     });
 
-    const slug = await getPracticeProblem('review');
+    const slug = getPracticeProblem('review', problemData, cache, false);
     expect(slug).toBe('two-sum');
   });
 
-  test('suggested: must not return null when recommended problems exist', async () => {
-    installChromeStub({
-      localData: {
-        problemsKey: makeAllProblems([
-          q({
-            titleSlug: 'find-first-palindromic-string-in-the-array',
-            difficulty: 'Easy',
-            status: null,
-            topicSlugs: ['array'],
-          }),
-        ]),
-        submissionCacheKey: makeCacheData(),
-        userDataKey: { isPremium: false },
-      },
-    });
+  test('suggested: must not return null when recommended problems exist', () => {
+    const problemData = makeAllProblems([
+      q({
+        titleSlug: 'find-first-palindromic-string-in-the-array',
+        difficulty: 'Easy',
+        status: null,
+        topicSlugs: ['array'],
+      }),
+    ]);
+    const cache = makeCacheData();
 
-    const slug = await getPracticeProblem('suggested');
+    const slug = getPracticeProblem('suggested', problemData, cache, false);
     expect(slug).not.toBe(null);
     expect(typeof slug).toBe('string');
   });
 
-  test('random: must not return null when problems exist', async () => {
+  test('random: must not return null when problems exist', () => {
     const restoreRandom = Math.random;
     Math.random = () => 0;
 
-    installChromeStub({
-      localData: {
-        problemsKey: makeAllProblems([
-          q({ titleSlug: 'some-problem', difficulty: 'Medium', status: null, topicSlugs: ['hash-table'] }),
-        ]),
-        submissionCacheKey: makeCacheData(),
-        userDataKey: { isPremium: false },
-      },
-    });
+    const problemData = makeAllProblems([
+      q({ titleSlug: 'some-problem', difficulty: 'Medium', status: null, topicSlugs: ['hash-table'] }),
+    ]);
+    const cache = makeCacheData();
 
     try {
-      const slug = await getPracticeProblem('random');
+      const slug = getPracticeProblem('random', problemData, cache, false);
       expect(slug).not.toBe(null);
       expect(typeof slug).toBe('string');
     } finally {
@@ -344,16 +294,11 @@ describe('getPracticeProblem', () => {
     }
   });
 
-  test('returns null when no problems available', async () => {
-    installChromeStub({
-      localData: {
-        problemsKey: makeAllProblems([]),
-        submissionCacheKey: makeCacheData(),
-        userDataKey: { isPremium: false },
-      },
-    });
+  test('returns null when no problems available', () => {
+    const problemData = makeAllProblems([]);
+    const cache = makeCacheData();
 
-    const slug = await getPracticeProblem('random');
+    const slug = getPracticeProblem('random', problemData, cache, false);
     expect(slug).toBe(null);
   });
 });

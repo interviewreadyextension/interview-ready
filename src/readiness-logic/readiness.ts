@@ -7,7 +7,8 @@
  *   - Suggests the next best problem to solve for each topic
  *   - Provides "big button" practice modes (suggested, review, random)
  *
- * All functions are side-effect-free and testable without Chrome APIs.
+ * All functions are pure (no side effects, no Chrome API calls) and
+ * testable in isolation.  The popup passes in data it already has.
  * Date-range filtering is supported throughout so the popup can show
  * readiness scoped to 7d / 30d / 120d / all-time windows.
  */
@@ -375,19 +376,17 @@ function preferRecommended(arr: string[]): string | null {
 
 /**
  * Get the next practice problem for a given topic and difficulty target.
- * Pass `dateRange` so "solved" respects the active date filter.
+ * Pure — caller provides all required data.
  */
-export async function getNextPracticeProblem(
+export function getNextPracticeProblem(
   topic: string,
   target: PracticeTarget,
+  problems: Problem[],
+  cache: SubmissionCacheData | undefined,
+  isPremium: boolean,
   dateRange?: DateRange,
-): Promise<string | null> {
-  const store = await chrome.storage.local.get(['problemsKey', 'submissionCacheKey', 'userDataKey']);
-  const problems = (store.problemsKey as ProblemData).data.problemsetQuestionList.questions;
-  const cache = store.submissionCacheKey as SubmissionCacheData | undefined;
-  const isPremium = (store.userDataKey as { isPremium?: boolean } | undefined)?.isPremium ?? false;
+): string | null {
   const accepted = buildAcceptedSet(cache, dateRange);
-
   const { unsolved, solved } = classifyProblems(problems, topic, accepted, isPremium);
 
   switch (target) {
@@ -423,19 +422,19 @@ export async function getNextPracticeProblem(
 
 /**
  * Get a practice problem by high-level mode (suggested / review / random).
- * Pass `dateRange` so "solved" respects the active date filter.
+ * Pure — caller provides all required data.
  */
-export async function getPracticeProblem(
+export function getPracticeProblem(
   practiceType: BigPracticeMode,
+  problems: ProblemData,
+  cache: SubmissionCacheData | undefined,
+  isPremium: boolean,
   dateRange?: DateRange,
-): Promise<string | null> {
-  const store = await chrome.storage.local.get(['problemsKey', 'submissionCacheKey']);
-  const allProblems = store.problemsKey as ProblemData;
-  const cache = store.submissionCacheKey as SubmissionCacheData | undefined;
+): string | null {
   const accepted = buildAcceptedSet(cache, dateRange);
   const allowFallback = !dateRange;
   const entries = cache?.entries ?? {};
-  const questions = allProblems.data.problemsetQuestionList.questions;
+  const questions = problems.data.problemsetQuestionList.questions;
 
   if (practiceType === 'suggested') {
     // First: find the next unfinished recommended problem
@@ -447,10 +446,10 @@ export async function getPracticeProblem(
       }
     }
     // All recommended done — find first non-ready topic
-    const readiness = getReadinessData(allProblems, cache, dateRange);
+    const readiness = getReadinessData(problems, cache, dateRange);
     for (const topic of TARGET_TOPICS) {
       if (readiness[topic][0] !== 'ready') {
-        return getNextPracticeProblem(topic, 'suggested', dateRange);
+        return getNextPracticeProblem(topic, 'suggested', questions, cache, isPremium, dateRange);
       }
     }
   } else if (practiceType === 'review') {
@@ -463,7 +462,7 @@ export async function getPracticeProblem(
     return randomElementInArray(solvedList);
   } else if (practiceType === 'random') {
     const topic = randomElementInArray([...TARGET_TOPICS]) ?? TARGET_TOPICS[0];
-    return getNextPracticeProblem(topic, 'suggested', dateRange);
+    return getNextPracticeProblem(topic, 'suggested', questions, cache, isPremium, dateRange);
   }
 
   return null;
