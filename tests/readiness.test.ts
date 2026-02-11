@@ -5,6 +5,7 @@ import {
   getNextPracticeProblem,
   getPracticeProblem,
   randomElementInArray,
+  computeTopicAvailability,
   recommendedList,
   TARGET_TOPICS,
   TARGET_TOPIC_COUNTS,
@@ -209,7 +210,7 @@ describe('getNextPracticeProblem', () => {
     Math.random = () => 0;
 
     const questions = [
-      q({ titleSlug: 'valid-problem', difficulty: 'Easy', status: null, topicSlugs: ['array'] }),
+      q({ titleSlug: 'concatenation-of-array', difficulty: 'Easy', status: null, topicSlugs: ['array'] }),
     ];
     const cache = makeCacheData();
 
@@ -300,5 +301,50 @@ describe('getPracticeProblem', () => {
 
     const slug = getPracticeProblem('random', problemData, cache, false);
     expect(slug).toBe(null);
+  });
+});
+
+// ─── computeTopicAvailability ──────────────────────────────────────
+
+describe('computeTopicAvailability', () => {
+  test('suggested counts only include problems in recommended list', () => {
+    const questions = [
+      q({ titleSlug: 'concatenation-of-array', difficulty: 'Easy', status: null, topicSlugs: ['array'] }), // in recommendedList
+      q({ titleSlug: 'not-recommended-1', difficulty: 'Easy', status: null, topicSlugs: ['array'] }),
+      q({ titleSlug: 'not-recommended-2', difficulty: 'Medium', status: null, topicSlugs: ['array'] }),
+      q({ titleSlug: 'spiral-matrix', difficulty: 'Medium', status: null, topicSlugs: ['array'] }), // in recommendedList
+    ];
+    
+    const accepted = new Set<string>();
+    const avail = computeTopicAvailability(questions, accepted, false);
+    
+    // 'suggested' should only count the 2 recommended problems
+    expect(avail.array.suggested.total).toBe(2);
+    expect(avail.array.suggested.unsolved).toBe(2);
+    
+    // 'easy' should count all easy problems
+    expect(avail.array.easy.total).toBe(2);
+    expect(avail.array.easy.unsolved).toBe(2);
+    
+    // 'medium' should count all medium problems
+    expect(avail.array.medium.total).toBe(2);
+    expect(avail.array.medium.unsolved).toBe(2);
+    
+    // 'random' should count all problems
+    expect(avail.array.random.total).toBe(4);
+    expect(avail.array.random.unsolved).toBe(4);
+  });
+
+  test('suggested counts exclude solved recommended problems', () => {
+    const questions = [
+      q({ titleSlug: 'concatenation-of-array', difficulty: 'Easy', status: 'ac', topicSlugs: ['array'] }), // solved & recommended
+      q({ titleSlug: 'spiral-matrix', difficulty: 'Medium', status: null, topicSlugs: ['array'] }), // unsolved & recommended
+    ];
+    
+    const accepted = new Set(['concatenation-of-array']);
+    const avail = computeTopicAvailability(questions, accepted, false);
+    
+    expect(avail.array.suggested.total).toBe(2);
+    expect(avail.array.suggested.unsolved).toBe(1); // only spiral-matrix
   });
 });
