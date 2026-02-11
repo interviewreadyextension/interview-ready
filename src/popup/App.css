@@ -18,6 +18,15 @@ button {
   --progress-fill: #002b5b;       /* dark blue fill */
 }
 
+/* alt colors */
+/* :root {
+  --btn-bg: #5ba4cf;             
+  --btn-text: #fff;               
+  --btn-shadow: rgba(0, 90, 160, 0.5); 
+  --progress-track: rgba(255, 255, 255, 0.25);
+  --progress-fill: rgba(255, 255, 255, 0.4);   
+} */
+
 /** control row */
 .control-row {
   display: flex;
