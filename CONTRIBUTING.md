@@ -9,7 +9,9 @@ npm install
 npx tsc && npx vite build && npx vite build --config vite.config.content.ts
 ```
 
-Output goes to `dist/`. Load it as an unpacked extension at `chrome://extensions` with Developer Mode enabled.
+Output goes to `dist/`.
+
+**Why two Vite configs?** Chrome extension popups support `<script type="module">`, so the popup is built as a standard ES-module React app (`vite.config.ts`). Content scripts cannot use ES modules — they must be a single IIFE file — so the content script has its own build (`vite.config.content.ts`). The second build runs with `emptyOutDir: false` to avoid wiping the popup output.
 
 ## Test
 
@@ -18,6 +20,20 @@ npx vitest
 ```
 
 55 tests across readiness logic, sync layers, cache, strategy, fetch, and manifest validation.
+
+## Loading & Debugging Locally
+
+1. Build (see above)
+2. Open `chrome://extensions`, enable **Developer Mode**
+3. Click **Load unpacked** and select the `dist/` folder
+4. Visit [leetcode.com](https://leetcode.com) — the content script runs automatically
+5. Click the extension icon to open the popup
+
+**Debugging tips:**
+- **Content script logs**: Open DevTools on any leetcode.com tab → Console. All `delog()` output appears here (dev builds only — when `update_url` is absent from the manifest).
+- **Popup DevTools**: Right-click the popup → Inspect. React state, storage reads, and readiness computations log here.
+- **Storage inspector**: In either DevTools console, run `chrome.storage.local.get(null, console.log)` to dump all stored data.
+- **After code changes**: Rebuild, then click the refresh icon on `chrome://extensions` (or press Ctrl+R on the extension card). Reload the leetcode.com tab to re-run the content script.
 
 ## Architecture
 

@@ -19,7 +19,10 @@ Everything syncs automatically in the background whenever you visit LeetCode. No
 
 ## Getting Started
 
-1. Install the extension from the Chrome Web Store (or load it unpacked from `dist/`)
+1. Install the extension from the Chrome Web Store, or load it locally:
+   - Run `npm install && npm run build` (or see [CONTRIBUTING.md](CONTRIBUTING.md))
+   - Open `chrome://extensions`, enable **Developer Mode**
+   - Click **Load unpacked** and select the `dist/` folder
 2. Log in to [leetcode.com](https://leetcode.com)
 3. Click the Interview Ready icon in your toolbar
 4. Your readiness dashboard appears — start practicing!
