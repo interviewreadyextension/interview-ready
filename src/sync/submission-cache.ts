@@ -22,7 +22,7 @@ import type { ScanStrategy } from './scan-strategy';
 import { delay } from '../shared/utils';
 import { delog, delogError } from '../shared/logging';
 
-const THROTTLE_MS = 75;
+const THROTTLE_MS = 30;
 const CHECKPOINT_INTERVAL = 10; // write to storage every N problems
 const SYNC_PROGRESS_KEY = '_syncProgress_submissions';
 

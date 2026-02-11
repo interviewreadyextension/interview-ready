@@ -209,7 +209,6 @@ export const App: FC = () => {
   const totalProblems = questions?.length ?? 0;
   const totalSolved = recentAccepted.size;
   const totalCacheEntries = cacheData?.entries ? Object.keys(cacheData.entries).length : 0;
-  const cacheStatus = cacheData?.cacheStatus ?? 'empty';
 
   const formatAgo = useCallback((ts: number | undefined) => {
     if (!ts) return null;
