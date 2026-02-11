@@ -35,7 +35,6 @@ export const InfoSummary: FC<InfoSummaryProps> = ({
   dateFilter,
 }) => {
   const totalProblems = problemData?.data?.problemsetQuestionList?.questions?.length ?? 0;
-  const totalCacheEntries = cacheData?.entries ? Object.keys(cacheData.entries).length : 0;
 
   const problemsSyncLabel = useMemo(
     () => formatAgo(problemData?.fetchCompletedAt),
@@ -61,10 +60,6 @@ export const InfoSummary: FC<InfoSummaryProps> = ({
           {dateFilter !== 'all' && (
             <span className="info-label"> ({dateFilter})</span>
           )}
-        </span>
-        <span className="info-stat">
-          <span className="info-value">{totalCacheEntries.toLocaleString()}</span>
-          <span className="info-label"> cached</span>
         </span>
       </div>
       <div className="info-right">

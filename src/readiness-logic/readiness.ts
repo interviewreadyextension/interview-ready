@@ -62,7 +62,7 @@ export interface TopicAvailability {
 }
 
 export interface BigButtonStates {
-  suggested: { hasUnsolved: boolean; label: string };
+  suggested: { hasUnsolved: boolean; label: string; done: number; total: number };
   review: { enabled: boolean; label: string };
   random: { hasUnsolved: boolean; label: string };
 }
@@ -522,7 +522,7 @@ export function computeBigButtonStates(
   cacheEntries?: Record<string, { solved: boolean }>,
 ): BigButtonStates {
   const states: BigButtonStates = {
-    suggested: { hasUnsolved: false, label: 'Next Suggested Problem' },
+    suggested: { hasUnsolved: false, label: 'Next Suggested Problem', done: 0, total: 0 },
     review: { enabled: false, label: 'Review Random Completed' },
     random: { hasUnsolved: true, label: 'Solve Random Problem' },
   };
@@ -532,16 +532,24 @@ export function computeBigButtonStates(
   const entries = cacheEntries ?? {};
   const bySlug = new Map(questions.map(q => [q.titleSlug, q]));
 
-  // Check suggested list for unsolved
+  // Count suggested-list progress
+  let suggestedTotal = 0;
+  let suggestedDone = 0;
   for (const slug of recommendedList) {
     const q = bySlug.get(slug);
     if (!q || (q.paidOnly && !isPremium)) continue;
-    if (!isSolved(slug, q.status, accepted, allowFallback, entries)) {
+    suggestedTotal++;
+    if (isSolved(slug, q.status, accepted, allowFallback, entries)) {
+      suggestedDone++;
+    } else {
       states.suggested.hasUnsolved = true;
-      break;
     }
   }
-  if (!states.suggested.hasUnsolved) {
+  states.suggested.done = suggestedDone;
+  states.suggested.total = suggestedTotal;
+  if (states.suggested.hasUnsolved) {
+    states.suggested.label = `Next Suggested Problem (${suggestedDone}/${suggestedTotal})`;
+  } else {
     states.suggested.label = 'Solve Random Problem';
   }
 

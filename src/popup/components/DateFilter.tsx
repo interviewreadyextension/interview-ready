@@ -43,23 +43,26 @@ export const ControlRow: FC<ControlRowProps> = ({
   refreshing,
 }) => (
   <div className="control-row">
-    <select
-      className="date-filter"
-      value={dateFilter}
-      onChange={(e) => onDateFilterChange(e.target.value as DateFilterPreset)}
-    >
-      {DATE_FILTER_OPTIONS.map((opt) => (
-        <option key={opt.value} value={opt.value}>{opt.label}</option>
-      ))}
-    </select>
-    <div className="control-buttons">
-      <button className="clickable control-btn" onClick={onLegend} title="Legend">?</button>
-      <button
-        className={`clickable control-btn${refreshing ? ' spinning' : ''}`}
-        onClick={onRefresh}
-        title="Refresh"
-        disabled={refreshing}
-      >↺</button>
+    <span className="control-title">Interview Ready</span>
+    <div className="control-right">
+      <select
+        className="date-filter"
+        value={dateFilter}
+        onChange={(e) => onDateFilterChange(e.target.value as DateFilterPreset)}
+      >
+        {DATE_FILTER_OPTIONS.map((opt) => (
+          <option key={opt.value} value={opt.value}>{opt.label}</option>
+        ))}
+      </select>
+      <div className="control-buttons">
+        <button className="clickable control-btn" onClick={onLegend} title="Legend">?</button>
+        <button
+          className={`clickable control-btn${refreshing ? ' spinning' : ''}`}
+          onClick={onRefresh}
+          title="Refresh"
+          disabled={refreshing}
+        ><span className="icon">↺</span></button>
+      </div>
     </div>
   </div>
 );

@@ -18,16 +18,26 @@ export const BigPracticeButtons: FC<BigPracticeButtonsProps & { children?: React
   children,
 }) => (
   <>
-    {/* Top: suggested */}
+    {/* Top: suggested — with progress bar below label */}
     <button
-      className="clickable bigpractice"
+      className="clickable bigpractice bigpractice-suggested"
       onClick={() => onPracticeClick('suggested')}
     >
-      {states.suggested.label}
+      <div>{states.suggested.label}</div>
+      {states.suggested.total > 0 && (
+        <div className="bigpractice-progress-track">
+          <div
+            className="bigpractice-progress-fill"
+            style={{ width: `${Math.min(100, (states.suggested.done / states.suggested.total) * 100)}%` }}
+          />
+        </div>
+      )}
     </button>
 
     {/* Topic rows are inserted here as children */}
-    {children}
+    <div className="topic-rows-group">
+      {children}
+    </div>
 
     {/* Review */}
     {states.review.enabled ? (
