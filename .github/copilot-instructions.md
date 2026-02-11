@@ -1,70 +1,76 @@
-# Interview Ready - Copilot Instructions
+# Interview Ready — Copilot Instructions
 
-## 🏗️ Architecture Overview
-This is a Chrome Extension (Manifest V3) that tracks LeetCode readiness.
-- **Content Script (`src/onsite/content-script.js`)**: Runs on `leetcode.com`. Syncs user status + submissions from LeetCode's GraphQL API and problem data from GitHub raw JSON into `chrome.storage.local`.
-- **Popup UI (`src/ux/popup/home/home.js`)**: The main interface. Reactively renders state by listening to `chrome.storage.onChanged`.
-- **Logic (`src/readiness-logic/`)**: Modular functions for calculating readiness scores and problem recommendations.
+## Architecture Overview
 
-## 🛠️ Critical Workflows
-- **Syncing Data**: The UI triggers a refresh by setting `refresh_problems` or `modal_opened` in `chrome.storage.local`. The content script listens for these keys and executes API calls.
-- **Mocking**: `src/shared/mock.js` can be used to simulate the Chrome environment for testing logic outside the extension runtime.
+Chrome Extension (Manifest V3) built with **Vite + React + TypeScript**.
+Tracks LeetCode readiness by syncing problems and submissions, then
+computing per-topic readiness scores.
 
-## ⚠️ Project Conventions & Constraints
-- **NO BUNDLER**: The `onsite/content-script.js` file is NOT bundled. 
-    - **Do NOT use `import`/`export`** in `content-script.js`.
-    - Content script contains manual copies of shared code (marked with `// COPY OF ...`). Update copies if original shared files change.
-- **Logging**: Use `delog(msg)` from `src/shared/logging.js` instead of `console.log`. It only logs in development (when `update_url` is missing from manifest).
-- **Communication**: Always use `chrome.storage.local` and `chrome.storage.onChanged` for state synchronization between the popup and content script.
+| Layer | Source | Description |
+|-------|--------|-------------|
+| **Content Script** (`src/content-script/index.ts`) | Runs on `leetcode.com` | Orchestrates three-layer sync, writes results to `chrome.storage.local` |
+| **Popup** (`src/popup/`) | React app (`App.tsx`) | Reads storage reactively, renders readiness dashboard with practice buttons |
+| **Readiness Logic** (`src/readiness-logic/readiness.ts`) | Pure functions | Computes per-topic readiness, suggestions, availability counts |
 
-## ✅ Project Requirements (Hard Rules)
-1. **Never query LeetCode directly for problem data.** Problem data comes exclusively from the GitHub-hosted `data/problems.json` file, fetched via the raw URL. If the GitHub fetch fails, the extension uses whatever is already cached in `chrome.storage.local` and raises a flag.
-2. **Submissions come from LeetCode's submission list API**, authenticated by the user's session cookies on `leetcode.com`. This is the only acceptable direct LeetCode query the content script makes (besides user status).
-3. **No bundler.** The content script cannot use `import`/`export`. Shared logic lives in `src/shared/` with ES module exports, and is manually copied into `src/onsite/content-script.js` (marked with `// COPY OF ...` comments).
-4. **Use `delog()` for logging**, never bare `console.log`. Only logs in development (when `update_url` is missing from manifest).
-5. **Communication between popup and content script** uses `chrome.storage.local` and `chrome.storage.onChanged`. No direct messaging.
+### Build
 
-## 🧱 Data Architecture
+```bash
+# Popup (React ES-module bundle) + Content script (IIFE bundle)
+npx tsc && npx vite build && npx vite build --config vite.config.content.ts
+```
+
+Output goes to `dist/`. Static assets in `public/` are copied as-is.
+
+## Three-Layer Sync Architecture
+
+1. **Layer 1 — Problem catalog** (`src/sync/problem-sync.ts` → `src/api/leetcode-problems.ts`)
+   Batch-fetches all ~3 800 problems via `problemsetQuestionList` GraphQL.
+   Each problem includes per-user `status` ('ac' | 'notac' | null) because
+   the content script runs authenticated on leetcode.com.
+   TTL: 24 hours. Progress reported via `_syncProgress_problems`.
+
+2. **Layer 2 — Submission cache** (`src/sync/submission-cache.ts` → `src/api/leetcode-graphql.ts`)
+   Per-problem `questionSubmissionList` scan for actual accepted timestamps.
+   Uses a **strategy pattern** (`src/sync/scan-strategy.ts`):
+   - `TargetedStrategy` — only queries `status === 'ac'` problems (default)
+   - `EagerStrategy` — queries all attempted problems
+   Sequential with 30 ms throttle, checkpoints every 10 problems.
+
+3. **Layer 3 — Incremental sync** (`src/sync/submission-sync.ts`)
+   Fast ~20 recent-accepted check via `recentAcSubmissionList`.
+   Gap detection: if no overlap with cache → marks cache stale → Layer 2 re-runs.
+
+## Project Conventions
+
+- **Logging**: Use `delog()` / `delogError()` from `src/shared/logging.ts`. Only logs in development (when `update_url` is absent from manifest).
+- **Communication**: Popup ↔ content script exclusively via `chrome.storage.local` and `chrome.storage.onChanged`. No direct messaging.
+- **Storage keys**: Centralised in `src/storage/storage-keys.ts`, accessed through `src/storage/storage-service.ts`.
+- **Types**: Domain models in `src/types/models.ts`, storage shapes in `src/types/storage.types.ts`, LeetCode API shapes in `src/types/leetcode.types.ts`.
+
+## Data Architecture
 
 ### Problems (`problemsKey`)
-- **Source**: GitHub raw URL → `data/problems.json` (generated daily by GitHub Actions)
-- **Fetch cadence**: Once per 24 hours (semaphore pattern — set `fetchStartedAt` before fetch)
-- **On failure**: Keep cached data, record `lastError`, clear semaphore
-- **Format**: `{ data: { problemsetQuestionList: { total, questions: [...] } }, fetchStartedAt, fetchCompletedAt, timeStamp, source, lastError }`
+- **Source**: LeetCode `problemsetQuestionList` GraphQL (authenticated)
+- **Fetch cadence**: Once per 24 hours (TTL guard + in-flight guard)
+- **On failure**: Keep cached data, record `lastError`, set `usingCache: true`
 
-### Submissions (`recentSubmissionsKey`)
-- **Source**: LeetCode `questionSubmissionList` GraphQL API (user-authenticated)
-- **First sync**: Full paginated fetch of all submissions, filter to accepted only
-- **Subsequent syncs**: Incremental — fetch pages until we encounter the `lastSyncedTimestamp`
-- **Chronological validation**: Every page and final result are validated for descending timestamp order. Violations throw loud, descriptive errors.
-- **Format**: `{ data: { recentAcSubmissionList: [...] }, firstSyncedAt, lastSyncedAt, lastSyncedTimestamp, timeStamp, source, lastError }`
+### Submission Cache (`submissionCacheKey`)
+- **Source**: Per-problem `questionSubmissionList` GraphQL (authenticated)
+- **Status lifecycle**: `empty → building → valid` (or `stale` if gap detected)
+- **Entries**: `{ [titleSlug]: { solved, latestAcceptedTimestamp, checkedAt } }`
 
 ### User Status (`userDataKey`)
-- **Source**: LeetCode `globalData` GraphQL API
+- **Source**: LeetCode `globalData` GraphQL
 - **Contains**: `isSignedIn`, `isPremium`, `username`
-- Fetched on every content script load (every LeetCode tab open)
+- Fetched on every content script load
 
-## 🤖 GitHub Actions
-- **Workflow**: `.github/workflows/sync-problems.yml`
-- **Script**: `scripts/fetch-problems.mjs` (Node.js)
-- Runs daily at midnight UTC, fetches all problems in 100-item batches from LeetCode GraphQL, writes `data/problems.json`, commits if changed.
-- This is the **only** place that queries LeetCode for problem data.
+## Testing
 
-## 🧪 Testing
-- Test runner: `node --test` (Node.js built-in)
-- Tests live in `tests/unit/*.test.js`
-- Chrome APIs mocked via `tests/unit/_helpers.mjs` (`installChromeStub` / `uninstallChromeStub`)
-- Sync logic is testable via `src/shared/sync-logic.js` (ES module with exports)
-- Content script copy is validated by static analysis tests
+- **Runner**: Vitest (`npx vitest`)
+- **Tests**: `tests/**/*.test.ts`
+- **Chrome mock**: `tests/setup.ts`
+- **55 tests** across readiness, sync, cache, strategy, fetch, manifest
 
-## 🪲 Debug Panel
-- Collapsible `<details>` element at bottom of popup
-- Shows: user, problems metadata (source, timestamps, errors, count), submissions metadata
-- Labels data as `(legacy - pre-migration data)` when metadata fields are absent
+## GitHub Actions
 
-## 📝 Key Data Structures
-- **Storage Keys**: `userDataKey`, `problemsKey`, `recentSubmissionsKey`.
-- **Readiness Logic**: Configuration for target topics and problem counts is in `src/readiness-logic/target-topics.js`.
-
-## 📌 Notable Technical Debt
-- **Hardcoded Username**: `src/onsite/content-script.js` currently has a hardcoded username `"michael187"` in `updateRecentAcceptedSubmissions`. This should eventually be replaced by the dynamic username from `userDataKey`.
+- **Publish**: `.github/workflows/publish.yml` — zips `dist/` and uploads to Chrome Web Store on manifest version bump.

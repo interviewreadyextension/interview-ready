@@ -1,3 +1,17 @@
+/**
+ * Readiness logic — pure functions that compute interview readiness.
+ *
+ * Given the problem catalog and submission cache, this module:
+ *   - Computes per-topic readiness scores (ready / almost / notReady)
+ *   - Determines available practice problems per difficulty
+ *   - Suggests the next best problem to solve for each topic
+ *   - Provides "big button" practice modes (suggested, review, random)
+ *
+ * All functions are side-effect-free and testable without Chrome APIs.
+ * Date-range filtering is supported throughout so the popup can show
+ * readiness scoped to 7d / 30d / 120d / all-time windows.
+ */
+
 import type { Problem } from '../types/models';
 import type { ProblemData, SubmissionCacheData } from '../types/storage.types';
 

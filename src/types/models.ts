@@ -1,3 +1,11 @@
+/**
+ * Domain model types shared across the extension.
+ *
+ * These interfaces define the shapes used by the sync layer, readiness
+ * logic, and popup — they are the single source of truth for what a
+ * "Problem", "Submission", and "UserStatus" look like at runtime.
+ */
+
 // ─── LeetCode Problem ───────────────────────────────────────────────
 
 /**

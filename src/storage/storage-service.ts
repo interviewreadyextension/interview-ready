@@ -1,8 +1,15 @@
-import type { StorageSchema, StorageKey } from '../types/storage.types';
-
 /**
- * Type-safe wrapper for chrome.storage.local
+ * Type-safe wrappers around `chrome.storage.local`.
+ *
+ * Every storage read/write in the extension should go through these
+ * helpers so that key names and value shapes are enforced by
+ * TypeScript at compile time.
+ *
+ * Also exposes `addStorageListener` for reactive updates — the popup
+ * uses it to re-render when the content script writes new data.
  */
+
+import type { StorageSchema, StorageKey } from '../types/storage.types';
 
 export async function getStorage<K extends StorageKey>(
   key: K

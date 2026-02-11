@@ -1,3 +1,11 @@
+/**
+ * Sync progress bars shown in the popup during data sync.
+ *
+ * Reads per-phase progress keys (`_syncProgress_problems`,
+ * `_syncProgress_submissions`) from chrome.storage.local and
+ * renders animated progress bars with eased number transitions.
+ */
+
 import { useState, useEffect, useRef, type FC } from 'react';
 
 interface SyncProgress {

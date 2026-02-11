@@ -1,3 +1,13 @@
+/**
+ * Storage type definitions for chrome.storage.local.
+ *
+ * Every key the extension reads or writes is declared in
+ * `StorageSchema`, ensuring type-safety through the helpers in
+ * `storage-service.ts`.  Sub-interfaces (`ProblemData`,
+ * `SubmissionCacheData`, etc.) describe the shape stored under
+ * each key.
+ */
+
 import type { Problem, AcceptedSubmission, UserStatus } from './models';
 
 // ─── Storage Schema ─────────────────────────────────────────────────

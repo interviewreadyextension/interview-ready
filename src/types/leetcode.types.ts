@@ -1,8 +1,12 @@
-import type { Problem, AcceptedSubmission, UserStatus } from './models';
-
 /**
- * LeetCode GraphQL response types
+ * LeetCode GraphQL request and response types.
+ *
+ * Mirrors the shapes returned by LeetCode's `/graphql/` endpoint.
+ * Used by `leetcode-graphql.ts` and `leetcode-problems.ts` to
+ * type-check API interactions without runtime validation.
  */
+
+import type { Problem, AcceptedSubmission, UserStatus } from './models';
 
 export interface GraphQLResponse<T> {
   data: T;

@@ -1,3 +1,14 @@
+/**
+ * Popup React app — the main readiness dashboard.
+ *
+ * Reads problem data and submission cache from `chrome.storage.local`,
+ * computes per-topic readiness scores via the readiness logic module,
+ * and renders an interactive grid of practice buttons.
+ *
+ * Communicates with the content script exclusively through storage
+ * keys (`refresh_problems`, `modal_opened`).
+ */
+
 import { useState, useEffect, useMemo, useCallback, type FC } from 'react';
 import type { ProblemData, SubmissionCacheData } from '../types/storage.types';
 import type { UserStatus } from '../types/models';

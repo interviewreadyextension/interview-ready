@@ -4,29 +4,41 @@ on:
   workflow_dispatch:  # Allows manual triggering
   push:
     paths:
-      - src/manifest.json
+      - public/manifest.json
 
 jobs:
   upload-zip:
     runs-on: ubuntu-latest
 
     env:
-      ZIP_FILE: src.zip
+      ZIP_FILE: dist.zip
 
     steps:
     - name: Checkout Code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
-    - name: Zip Source Directory Contents
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+        cache: npm
+
+    - name: Install Dependencies
+      run: npm ci
+
+    - name: Build
+      run: npx tsc && npx vite build && npx vite build --config vite.config.content.ts
+
+    - name: Zip Dist Directory
       run: |
-        cd src
+        cd dist
         zip -r ../${{ env.ZIP_FILE }} .
         cd ..
 
     - name: Upload to Chrome Web Store
       uses: mobilefirstllc/cws-publish@latest
       with:
-        action: 'publish'  # one of: upload, publish, testers
+        action: 'publish'
         client_id: ${{ secrets.CLIENT_ID }}
         client_secret: ${{ secrets.CLIENT_SECRET }}
         refresh_token: ${{ secrets.REFRESH_TOKEN }}

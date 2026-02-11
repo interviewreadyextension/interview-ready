@@ -1,3 +1,7 @@
+/**
+ * Popup entry point — mounts the React app into the popup's root DOM node.
+ */
+
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';

@@ -1,3 +1,18 @@
+/**
+ * Incremental Submission Sync (Layer 3)
+ *
+ * Fetches the ~20 most recent accepted submissions via the public
+ * `recentAcSubmissionList` API and reconciles them with the existing
+ * submission cache.  Fast enough to run on every page load.
+ *
+ * Gap detection: if none of the recent submissions overlap with
+ * cached entries, the cache is marked stale so that a full Layer-2
+ * rescan is triggered by the orchestrator.
+ *
+ * Also contains the legacy `updateSubmissions` function (deprecated)
+ * which accumulated submissions before the cache was introduced.
+ */
+
 import type { AcceptedSubmission } from '../types/models';
 import type { SubmissionData, SubmissionCacheData } from '../types/storage.types';
 import { STORAGE_KEYS } from '../storage/storage-keys';
