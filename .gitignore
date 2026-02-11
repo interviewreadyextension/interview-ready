@@ -1,5 +1,7 @@
 *.zip
-.github/
 node_modules/
+dist/
+_old_src/
 .env
 .DS_Store
+.vscode/

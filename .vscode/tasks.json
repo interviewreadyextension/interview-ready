@@ -1,0 +1,16 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run unit tests",
+			"type": "shell",
+			"command": "npm test",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$eslint-stylish"
+			],
+			"group": "test"
+		}
+	]
+}
