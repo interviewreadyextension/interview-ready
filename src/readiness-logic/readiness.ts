@@ -368,12 +368,6 @@ function classifyProblems(
 
 // ─── Practice problem selection ─────────────────────────────────────
 
-/** Pick from `arr`, preferring items in the recommended set. */
-function preferRecommended(arr: string[]): string | null {
-  const preferred = arr.filter(s => recommendedSet.has(s));
-  return randomElementInArray(preferred.length > 2 ? preferred : arr);
-}
-
 /**
  * Get the next practice problem for a given topic and difficulty target.
  * Pure — caller provides all required data.
@@ -405,19 +399,31 @@ export function getNextPracticeProblem(
       break;
   }
 
-  // Suggested mode: progressive difficulty
-  const easyFirst = Math.min(10, unsolved.easy.length);
-  const beforeTarget = Math.min(15, unsolved.easy.length + unsolved.medEasy.length);
+  // Suggested mode: only recommend from the global recommended set for this topic
+  // Filter to only include problems in recommendedSet
+  const recUnsolved = {
+    easy: unsolved.easy.filter(s => recommendedSet.has(s)),
+    medEasy: unsolved.medEasy.filter(s => recommendedSet.has(s)),
+    medTarget: unsolved.medTarget.filter(s => recommendedSet.has(s)),
+    medHard: unsolved.medHard.filter(s => recommendedSet.has(s)),
+    hard: unsolved.hard.filter(s => recommendedSet.has(s)),
+  };
+  const recSolved = solved.all.filter(s => recommendedSet.has(s));
 
-  if (easyFirst > solved.all.length) return preferRecommended(unsolved.easy);
-  if (beforeTarget > solved.all.length) return preferRecommended(unsolved.medEasy);
+  // Progressive difficulty based on solved count
+  const easyFirst = Math.min(10, recUnsolved.easy.length);
+  const beforeTarget = Math.min(15, recUnsolved.easy.length + recUnsolved.medEasy.length);
 
-  return preferRecommended(unsolved.medTarget)
-    ?? preferRecommended(unsolved.medEasy)
-    ?? preferRecommended(unsolved.medHard)
-    ?? preferRecommended(unsolved.hard)
-    ?? preferRecommended(unsolved.easy)
-    ?? preferRecommended(solved.all);
+  if (easyFirst > solved.all.length) return randomElementInArray(recUnsolved.easy);
+  if (beforeTarget > solved.all.length) return randomElementInArray(recUnsolved.medEasy);
+
+  // Prioritize unsolved recommended problems in progressive order
+  return randomElementInArray(recUnsolved.medTarget)
+    ?? randomElementInArray(recUnsolved.medEasy)
+    ?? randomElementInArray(recUnsolved.medHard)
+    ?? randomElementInArray(recUnsolved.hard)
+    ?? randomElementInArray(recUnsolved.easy)
+    ?? randomElementInArray(recSolved);
 }
 
 /**
@@ -462,7 +468,7 @@ export function getPracticeProblem(
     return randomElementInArray(solvedList);
   } else if (practiceType === 'random') {
     const topic = randomElementInArray([...TARGET_TOPICS]) ?? TARGET_TOPICS[0];
-    return getNextPracticeProblem(topic, 'suggested', questions, cache, isPremium, dateRange);
+    return getNextPracticeProblem(topic, 'random', questions, cache, isPremium, dateRange);
   }
 
   return null;
@@ -495,6 +501,7 @@ export function computeTopicAvailability(
   for (const q of questions) {
     if (q.paidOnly && !isPremium) continue;
     const solved = isSolved(q.titleSlug, q.status, accepted, allowFallback, entries);
+    const isRecommended = recommendedSet.has(q.titleSlug);
 
     for (const tag of q.topicTags || []) {
       const a = avail[tag.slug];
@@ -505,8 +512,11 @@ export function computeTopicAvailability(
         a[diff].total++;
         if (!solved) a[diff].unsolved++;
       }
-      a.suggested.total++;
-      if (!solved) a.suggested.unsolved++;
+      // Only count recommended problems for 'suggested' button
+      if (isRecommended) {
+        a.suggested.total++;
+        if (!solved) a.suggested.unsolved++;
+      }
       a.random.total++;
       if (!solved) a.random.unsolved++;
     }
