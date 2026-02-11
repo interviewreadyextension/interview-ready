@@ -10,7 +10,9 @@ import type { Problem, AcceptedSubmission, UserStatus } from './models';
 export interface StorageSchema {
   /** All LeetCode problems (fetched from API in batches) */
   problemsKey: ProblemData;
-  /** Accumulated accepted submissions (merged over time) */
+  /** Per-problem submission cache with solved status + timestamps */
+  submissionCacheKey: SubmissionCacheData;
+  /** Legacy accumulated submissions (kept for migration compat) */
   recentSubmissionsKey: SubmissionData;
   /** Current LeetCode user status (signed-in, premium, username) */
   userDataKey: UserStatus;
@@ -66,6 +68,47 @@ export interface SubmissionData {
   lastSyncedTimestamp?: string | null; // Newest submission's Unix-second timestamp
   lastError?: string | null;
   timeStamp?: number;              // Unix ms – general last-modified
+}
+
+// ─── Submission Cache ───────────────────────────────────────────────
+
+/**
+ * Cache status lifecycle:
+ *   'empty'    → first install, no data yet
+ *   'building' → full scan in progress
+ *   'valid'    → cache is up-to-date, incremental sync found no gaps
+ *   'stale'    → incremental sync detected a gap; full rescan needed
+ */
+export type CacheStatus = 'empty' | 'building' | 'valid' | 'stale';
+
+/** Per-problem entry in the submission cache. */
+export interface SubmissionCacheEntry {
+  /** Whether the user has at least one accepted submission */
+  solved: boolean;
+  /** Unix seconds of the latest accepted submission (null if unsolved) */
+  latestAcceptedTimestamp: number | null;
+  /** Unix ms when this entry was last verified via API */
+  checkedAt: number;
+}
+
+/**
+ * Top-level submission cache stored in `submissionCacheKey`.
+ *
+ * Maps `titleSlug → SubmissionCacheEntry` for every problem we've
+ * scanned. The `cacheStatus` field drives the sync orchestration:
+ * when 'stale' or 'empty', a full scan is triggered.
+ */
+export interface SubmissionCacheData {
+  /** Per-problem lookup:  slug → { solved, latestAcceptedTimestamp, checkedAt } */
+  entries: Record<string, SubmissionCacheEntry>;
+  /** Lifecycle status — drives sync decisions */
+  cacheStatus: CacheStatus;
+  /** Unix ms of last completed full scan (null if never) */
+  lastFullScanAt: number | null;
+  /** Unix ms of last incremental sync */
+  lastIncrementalAt: number | null;
+  /** Last error message, if any */
+  lastError?: string | null;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, type FC } from 'react';
-import type { ProblemData, SubmissionData } from '../types/storage.types';
+import type { ProblemData, SubmissionCacheData } from '../types/storage.types';
 import type { UserStatus } from '../types/models';
 import { delogError } from '../shared/logging';
 import {
@@ -44,10 +44,10 @@ function ensureLeetCodeTab(): void {
 export type DateFilterPreset = '7d' | '30d' | '120d' | 'all';
 
 const DATE_FILTER_OPTIONS: { value: DateFilterPreset; label: string }[] = [
-  { value: '7d', label: 'Last 7 days' },
-  { value: '30d', label: 'Last 30 days' },
-  { value: '120d', label: 'Last 120 days' },
   { value: 'all', label: 'All time' },
+  { value: '120d', label: 'Last 120 days' },
+  { value: '30d', label: 'Last 30 days' },
+  { value: '7d', label: 'Last 7 days' },
 ];
 
 function getDateRange(preset: DateFilterPreset): DateRange | undefined {
@@ -139,10 +139,10 @@ const TopicRow: FC<TopicRowProps> = ({ topic, status, percentage, availability, 
 export const App: FC = () => {
   const [userData, setUserData] = useState<UserStatus>();
   const [problemData, setProblemData] = useState<ProblemData>();
-  const [submissionData, setSubmissionData] = useState<SubmissionData>();
+  const [cacheData, setCacheData] = useState<SubmissionCacheData>();
   const [loading, setLoading] = useState(true);
   const [legendVisible, setLegendVisible] = useState(false);
-  const [dateFilter, setDateFilter] = useState<DateFilterPreset>('all');
+  const [dateFilter, setDateFilter] = useState<DateFilterPreset>('120d');
   const [refreshing, setRefreshing] = useState(false);
 
   // Load initial data from chrome.storage.local
@@ -151,11 +151,11 @@ export const App: FC = () => {
       const result = await chrome.storage.local.get([
         'userDataKey',
         'problemsKey',
-        'recentSubmissionsKey',
-      ]) as { userDataKey?: UserStatus; problemsKey?: ProblemData; recentSubmissionsKey?: SubmissionData };
+        'submissionCacheKey',
+      ]) as { userDataKey?: UserStatus; problemsKey?: ProblemData; submissionCacheKey?: SubmissionCacheData };
       setUserData(result.userDataKey);
       setProblemData(result.problemsKey);
-      setSubmissionData(result.recentSubmissionsKey);
+      setCacheData(result.submissionCacheKey);
       setLoading(false);
 
       // Signal popup opened → triggers submission sync in the content script
@@ -171,7 +171,7 @@ export const App: FC = () => {
     function listener(changes: Record<string, chrome.storage.StorageChange>) {
       if (changes.userDataKey) setUserData(changes.userDataKey.newValue as UserStatus);
       if (changes.problemsKey) setProblemData(changes.problemsKey.newValue as ProblemData);
-      if (changes.recentSubmissionsKey) setSubmissionData(changes.recentSubmissionsKey.newValue as SubmissionData);
+      if (changes.submissionCacheKey) setCacheData(changes.submissionCacheKey.newValue as SubmissionCacheData);
     }
     chrome.storage.onChanged.addListener(listener);
     return () => chrome.storage.onChanged.removeListener(listener);
@@ -183,31 +183,33 @@ export const App: FC = () => {
   // Compute readiness scores
   const readinessData = useMemo<ReadinessData | null>(() => {
     if (!problemData) return null;
-    return getReadinessData(problemData, submissionData, dateRange);
-  }, [problemData, submissionData, dateRange]);
+    return getReadinessData(problemData, cacheData, dateRange);
+  }, [problemData, cacheData, dateRange]);
 
   // Set of accepted slugs (respects date filter)
   const recentAccepted = useMemo(
-    () => buildAcceptedSet(submissionData, dateRange),
-    [submissionData, dateRange],
+    () => buildAcceptedSet(cacheData, dateRange),
+    [cacheData, dateRange],
   );
   const questions = problemData?.data?.problemsetQuestionList?.questions;
   const isPremium = userData?.isPremium ?? false;
+  const cacheEntries = cacheData?.entries;
 
   const availability = useMemo<Record<string, TopicAvailability> | null>(() => {
     if (!questions) return null;
-    return computeTopicAvailability(questions, recentAccepted, isPremium, dateRange);
-  }, [questions, recentAccepted, isPremium, dateRange]);
+    return computeTopicAvailability(questions, recentAccepted, isPremium, dateRange, cacheEntries);
+  }, [questions, recentAccepted, isPremium, dateRange, cacheEntries]);
 
   const bigButtonStates = useMemo<BigButtonStates | null>(() => {
     if (!questions) return null;
-    return computeBigButtonStates(questions, recentAccepted, isPremium, dateRange);
-  }, [questions, recentAccepted, isPremium, dateRange]);
+    return computeBigButtonStates(questions, recentAccepted, isPremium, dateRange, cacheEntries);
+  }, [questions, recentAccepted, isPremium, dateRange, cacheEntries]);
 
   // Derived stats
   const totalProblems = questions?.length ?? 0;
   const totalSolved = recentAccepted.size;
-  const totalSubmissions = submissionData?.data?.recentAcSubmissionList?.length ?? 0;
+  const totalCacheEntries = cacheData?.entries ? Object.keys(cacheData.entries).length : 0;
+  const cacheStatus = cacheData?.cacheStatus ?? 'empty';
 
   const formatAgo = useCallback((ts: number | undefined) => {
     if (!ts) return null;
@@ -225,8 +227,8 @@ export const App: FC = () => {
     [problemData?.fetchCompletedAt, formatAgo],
   );
   const subsSyncLabel = useMemo(
-    () => formatAgo(submissionData?.lastSyncedAt),
-    [submissionData?.lastSyncedAt, formatAgo],
+    () => formatAgo(cacheData?.lastIncrementalAt ?? cacheData?.lastFullScanAt ?? undefined),
+    [cacheData?.lastIncrementalAt, cacheData?.lastFullScanAt, formatAgo],
   );
 
   // Sorted topic data
@@ -242,8 +244,8 @@ export const App: FC = () => {
       if (!slug) {
         // Fallback: pick from solved problems
         const allProblems = (await chrome.storage.local.get(['problemsKey'])).problemsKey as ProblemData;
-        const recSubs = (await chrome.storage.local.get(['recentSubmissionsKey'])).recentSubmissionsKey as SubmissionData | undefined;
-        const recAccepted = buildAcceptedSet(recSubs);
+        const cache = (await chrome.storage.local.get(['submissionCacheKey'])).submissionCacheKey as SubmissionCacheData | undefined;
+        const recAccepted = buildAcceptedSet(cache);
         const userPremium = ((await chrome.storage.local.get(['userDataKey'])).userDataKey as UserStatus | undefined)?.isPremium;
         const qs = allProblems?.data?.problemsetQuestionList?.questions ?? [];
 
@@ -378,8 +380,8 @@ export const App: FC = () => {
             )}
           </span>
           <span className="info-stat">
-            <span className="info-value">{totalSubmissions.toLocaleString()}</span>
-            <span className="info-label"> subs</span>
+            <span className="info-value">{totalCacheEntries.toLocaleString()}</span>
+            <span className="info-label"> cached</span>
           </span>
         </div>
         <div className="info-right">
@@ -440,44 +442,6 @@ export const App: FC = () => {
       </div>
 
       <SyncProgressBar />
-
-      <details className="debug-panel">
-        <summary>Debug Info</summary>
-        <div id="debug-content">
-          <strong>Problems:</strong> {totalProblems} loaded
-          {problemData?.source && ` (source: ${problemData.source})`}
-          {problemData?.fetchCompletedAt && ` @ ${new Date(problemData.fetchCompletedAt).toLocaleTimeString()}`}
-          {problemData?.lastError && <span style={{color:'red'}}> ERROR: {problemData.lastError}</span>}
-          {'\n'}
-          <strong>Sample problem status:</strong>{' '}
-          {(() => {
-            const qs = problemData?.data?.problemsetQuestionList?.questions;
-            if (!qs?.length) return 'no problems';
-            const withStatus = qs.filter(q => q.status);
-            const sample = qs.slice(0, 3).map(q => `${q.titleSlug}:${q.status ?? 'null'}`).join(', ');
-            return `${withStatus.length}/${qs.length} have status field. Sample: ${sample}`;
-          })()}
-          {'\n'}
-          <strong>Submissions:</strong> {totalSubmissions} stored
-          {submissionData?.source && ` (source: ${submissionData.source})`}
-          {submissionData?.lastSyncedAt && ` @ ${new Date(submissionData.lastSyncedAt).toLocaleTimeString()}`}
-          {submissionData?.lastError && <span style={{color:'red'}}> ERROR: {submissionData.lastError}</span>}
-          {'\n'}
-          <strong>First synced:</strong> {submissionData?.firstSyncedAt ? new Date(submissionData.firstSyncedAt).toLocaleString() : 'never'}
-          {'\n'}
-          <strong>Accepted set (filtered):</strong> {totalSolved} slugs
-          {dateFilter !== 'all' && ` (range: ${dateFilter})`}
-          {'\n'}
-          <strong>Sample submissions:</strong>{' '}
-          {(() => {
-            const subs = submissionData?.data?.recentAcSubmissionList;
-            if (!subs?.length) return 'none';
-            return subs.slice(0, 3).map(s =>
-              `${s.titleSlug} (ts:${s.timestamp}, ${new Date(Number(s.timestamp) * 1000).toLocaleDateString()})`
-            ).join('; ');
-          })()}
-        </div>
-      </details>
 
       <div className="github-link">
         <a href="https://github.com/interviewreadyextension/interview-ready" target="_blank" rel="noreferrer">

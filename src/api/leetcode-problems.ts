@@ -12,7 +12,7 @@ import { delay } from '../shared/utils';
 import { LEETCODE_GRAPHQL_URL } from './leetcode-graphql';
 
 const BATCH_SIZE = 200;
-const THROTTLE_MS = 300; // ~3 req/sec
+const THROTTLE_MS = 200; // ~5 req/sec
 
 interface ProblemBatchResult {
   total: number;
@@ -80,7 +80,7 @@ export type OnProgressCallback = (progress: FetchProgress) => void;
 
 /**
  * Fetch all problems from LeetCode in batches of 100.
- * ~38 requests for ~3800 problems, throttled to ~2 req/sec (~20 seconds).
+ * ~38 requests for ~???? problems, throttled to ~2 req/sec (~20 seconds).
  *
  * When authenticated (content script), each problem has `status: 'ac' | 'notac' | null`.
  */

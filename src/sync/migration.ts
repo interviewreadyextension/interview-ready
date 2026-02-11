@@ -20,7 +20,7 @@ export async function migrateStorageIfNeeded(): Promise<{
     `Storage migration: clearing pre-migration caches (version ${currentVersion ?? 'none'} → ${STORAGE_VERSION})`
   );
 
-  await removeStorage([STORAGE_KEYS.problems, STORAGE_KEYS.submissions]);
+  await removeStorage([STORAGE_KEYS.problems, STORAGE_KEYS.submissions, STORAGE_KEYS.submissionCache]);
   await setStorage(STORAGE_KEYS.version, STORAGE_VERSION);
 
   return { migrated: true, from: currentVersion ?? null, to: STORAGE_VERSION };

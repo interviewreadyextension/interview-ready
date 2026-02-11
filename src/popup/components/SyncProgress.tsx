@@ -49,7 +49,8 @@ const AnimatedNumber: FC<{ value: number; duration?: number }> = ({ value, durat
 };
 
 function getPhaseLabel(phase: string): string {
-  if (phase === 'submissions') return 'Syncing submissions';
+  if (phase === 'submissions') return 'Getting submission history';
+  if (phase === 'scanning') return 'Getting submission history';
   if (phase === 'status') return 'Syncing statuses';
   return 'Loading problems';
 }

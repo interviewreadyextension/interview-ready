@@ -9,7 +9,8 @@
 
 export const STORAGE_KEYS = {
   problems: 'problemsKey',
-  submissions: 'recentSubmissionsKey',
+  submissionCache: 'submissionCacheKey',
+  submissions: 'recentSubmissionsKey',      // legacy — kept for migration
   userData: 'userDataKey',
   version: '_storageVersion',
   refreshTrigger: 'refresh_problems',
@@ -17,4 +18,4 @@ export const STORAGE_KEYS = {
 } as const;
 
 /** Bump this when the storage schema changes to force a migration. */
-export const STORAGE_VERSION = 1;
+export const STORAGE_VERSION = 2;

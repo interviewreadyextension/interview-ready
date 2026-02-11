@@ -1,5 +1,5 @@
 import type { Problem } from '../types/models';
-import type { ProblemData, SubmissionData } from '../types/storage.types';
+import type { ProblemData, SubmissionCacheData } from '../types/storage.types';
 
 /**
  * Target question counts per topic
@@ -55,49 +55,73 @@ export interface DateRange {
 }
 
 /**
- * Build a set of accepted problem slugs from submissions.
+ * Build a set of accepted problem slugs from the submission cache.
  *
- * When `dateRange` is provided, only submissions whose timestamp falls
- * within [startSec, endSec] are included.
+ * When `dateRange` is provided, only entries whose `latestAcceptedTimestamp`
+ * falls within [startSec, endSec] are included. Because the cache stores
+ * real per-problem timestamps, date filtering now works for ALL solved
+ * problems — not just the ~20 most recent.
  */
 export function buildAcceptedSet(
-  submissions?: SubmissionData,
+  cache?: SubmissionCacheData,
   dateRange?: DateRange,
 ): Set<string> {
   const accepted = new Set<string>();
-  const acList = submissions?.data?.recentAcSubmissionList;
-  if (acList?.length) {
-    for (const item of acList) {
-      if (dateRange) {
-        const ts = Number(item.timestamp);
-        if (ts < dateRange.startSec || ts > dateRange.endSec) continue;
+  if (!cache?.entries) return accepted;
+
+  for (const [slug, entry] of Object.entries(cache.entries)) {
+    if (!entry.solved) continue;
+
+    if (dateRange) {
+      // With a date filter, we need a real timestamp to confirm the solve is in range.
+      // Entries with null timestamps are excluded — we can't prove they're in range.
+      if (entry.latestAcceptedTimestamp === null) continue;
+      if (entry.latestAcceptedTimestamp < dateRange.startSec
+        || entry.latestAcceptedTimestamp > dateRange.endSec) {
+        continue;
       }
-      accepted.add(item.titleSlug);
     }
+
+    accepted.add(slug);
   }
+
   return accepted;
 }
 
 /**
  * Calculate readiness data for all target topics.
- * When `dateRange` is provided, only problems solved within that range count.
+ *
+ * Primary source: the submission cache (`buildAcceptedSet`).
+ * Fallback: when cache is still building and no entry exists for a problem,
+ * `question.status === 'ac'` is used as a best-effort indicator (all-time
+ * only — the status field has no timestamp for date filtering).
  */
 export function getReadinessData(
   allProblems: ProblemData,
-  recentAcceptedSubmissions?: SubmissionData,
+  submissionCache?: SubmissionCacheData,
   dateRange?: DateRange,
 ): ReadinessData {
-  const recentAccepted = buildAcceptedSet(recentAcceptedSubmissions, dateRange);
+  const cacheAccepted = buildAcceptedSet(submissionCache, dateRange);
 
-  // When a date range filter is active, ignore `question.status` from LeetCode
-  // (it has no timestamp) and rely solely on the date-filtered accepted set.
-  const useStatusField = !dateRange;
+  // Use the status field as a fallback only when:
+  //   1. No date range filter is active (status has no timestamp), AND
+  //   2. The cache entry for this problem doesn't exist yet
+  const allowStatusFallback = !dateRange;
+  const cacheEntries = submissionCache?.entries ?? {};
 
   // Build Topic Points
   const topicPoints: Record<string, number> = {};
 
   allProblems.data.problemsetQuestionList.questions.forEach((question) => {
-    if ((useStatusField && question.status === 'ac') || recentAccepted.has(question.titleSlug)) {
+    // A problem is "solved" if:
+    //   1. It’s in the cache-derived accepted set, OR
+    //   2. Fallback: status === 'ac' and we have no cache entry yet (all-time only)
+    const inCache = cacheAccepted.has(question.titleSlug);
+    const statusFallback = allowStatusFallback
+      && question.status === 'ac'
+      && !cacheEntries[question.titleSlug];
+
+    if (inCache || statusFallback) {
       let points = 0.1;
       if (question.difficulty === 'Easy') {
         points = 0.4;
@@ -329,9 +353,8 @@ export async function getNextPracticeProblem(
   target: PracticeTarget
 ): Promise<string | null> {
   const allProblems = (await chrome.storage.local.get(['problemsKey'])).problemsKey as ProblemData;
-  const recentAccepted = buildAcceptedSet(
-    (await chrome.storage.local.get(['recentSubmissionsKey'])).recentSubmissionsKey as SubmissionData | undefined,
-  );
+  const cache = (await chrome.storage.local.get(['submissionCacheKey'])).submissionCacheKey as SubmissionCacheData | undefined;
+  const recentAccepted = buildAcceptedSet(cache);
   const userHasPremium = (
     (await chrome.storage.local.get(['userDataKey'])).userDataKey as { isPremium?: boolean } | undefined
   )?.isPremium;
@@ -447,8 +470,8 @@ export async function getPracticeProblem(
   practiceType: BigPracticeMode
 ): Promise<string | null> {
   const allProblems = (await chrome.storage.local.get(['problemsKey'])).problemsKey as ProblemData;
-  const { recentSubmissionsKey: recentAcceptedData } = await chrome.storage.local.get(['recentSubmissionsKey']) as { recentSubmissionsKey?: SubmissionData };
-  const recentAcceptedSet = buildAcceptedSet(recentAcceptedData);
+  const cache = (await chrome.storage.local.get(['submissionCacheKey'])).submissionCacheKey as SubmissionCacheData | undefined;
+  const recentAcceptedSet = buildAcceptedSet(cache);
 
   if (practiceType === 'suggested') {
     const acceptedSet = new Set<string>();
@@ -464,7 +487,7 @@ export async function getPracticeProblem(
       }
     }
 
-    const readinessData = getReadinessData(allProblems, recentAcceptedData);
+    const readinessData = getReadinessData(allProblems, cache);
 
     for (const topic of TARGET_TOPICS) {
       if (readinessData[topic][0] !== 'ready') {
@@ -501,13 +524,17 @@ export interface TopicAvailability {
 }
 
 /**
- * Compute availability of problems by topic and difficulty
+ * Compute availability of problems by topic and difficulty.
+ *
+ * `recentAccepted` is the set from `buildAcceptedSet(cache, dateRange)`.
+ * `cacheEntries` is passed so the status-fallback logic stays consistent.
  */
 export function computeTopicAvailability(
   questions: Problem[],
   recentAccepted: Set<string>,
   userHasPremium: boolean,
   dateRange?: DateRange,
+  cacheEntries?: Record<string, { solved: boolean }>,
 ): Record<string, TopicAvailability> {
   const availability: Record<string, TopicAvailability> = {};
 
@@ -523,12 +550,15 @@ export function computeTopicAvailability(
 
   if (!questions) return availability;
 
-  const useStatusField = !dateRange;
+  const allowStatusFallback = !dateRange;
+  const entries = cacheEntries ?? {};
 
   for (const q of questions) {
     if (q.paidOnly && !userHasPremium) continue;
 
-    const solved = (useStatusField && q.status === 'ac') || recentAccepted.has(q.titleSlug);
+    const inCache = recentAccepted.has(q.titleSlug);
+    const statusFallback = allowStatusFallback && q.status === 'ac' && !entries[q.titleSlug];
+    const solved = inCache || statusFallback;
 
     for (const tag of q.topicTags || []) {
       const topic = tag.slug;
@@ -565,6 +595,7 @@ export function computeBigButtonStates(
   recentAccepted: Set<string>,
   userHasPremium: boolean,
   dateRange?: DateRange,
+  cacheEntries?: Record<string, { solved: boolean }>,
 ): BigButtonStates {
   const states: BigButtonStates = {
     suggested: { hasUnsolved: false, label: 'Next Suggested Problem' },
@@ -574,7 +605,8 @@ export function computeBigButtonStates(
 
   if (!questions) return states;
 
-  const useStatusField = !dateRange;
+  const allowStatusFallback = !dateRange;
+  const entries = cacheEntries ?? {};
 
   // Check suggested list
   const bySlug = new Map<string, Problem>();
@@ -586,8 +618,9 @@ export function computeBigButtonStates(
     const q = bySlug.get(slug);
     if (!q) continue;
     if (q.paidOnly && !userHasPremium) continue;
-    const solved = (useStatusField && q.status === 'ac') || recentAccepted.has(slug);
-    if (!solved) {
+    const inCache = recentAccepted.has(slug);
+    const statusFallback = allowStatusFallback && q.status === 'ac' && !entries[slug];
+    if (!inCache && !statusFallback) {
       states.suggested.hasUnsolved = true;
       break;
     }
@@ -604,8 +637,9 @@ export function computeBigButtonStates(
       TARGET_TOPICS.includes(t.slug as (typeof TARGET_TOPICS)[number])
     );
     if (!inTargetTopics) continue;
-    const solved = (useStatusField && q.status === 'ac') || recentAccepted.has(q.titleSlug);
-    if (solved) {
+    const inCache = recentAccepted.has(q.titleSlug);
+    const statusFallback = allowStatusFallback && q.status === 'ac' && !entries[q.titleSlug];
+    if (inCache || statusFallback) {
       states.review.enabled = true;
       break;
     }

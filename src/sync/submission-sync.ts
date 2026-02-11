@@ -1,24 +1,13 @@
 import type { AcceptedSubmission } from '../types/models';
-import type { SubmissionData } from '../types/storage.types';
+import type { SubmissionData, SubmissionCacheData } from '../types/storage.types';
 import { STORAGE_KEYS } from '../storage/storage-keys';
 import { getStorage, setStorage } from '../storage/storage-service';
 import { fetchRecentAcceptedSubmissions } from '../api/leetcode-graphql';
 import { delog } from '../shared/logging';
+import { makeEmptyCache } from './submission-cache';
 
-export interface UpdateSubmissionsOptions {
-  username: string;
-}
+// ─── Shared helpers ─────────────────────────────────────────────────
 
-export interface UpdateSubmissionsResult {
-  skipped?: boolean;
-  mode?: 'full' | 'incremental' | 'failed';
-  count?: number;
-  error?: string;
-}
-
-/**
- * Validate chronological order (descending timestamps)
- */
 export function validateChronologicalOrder(
   submissions: { timestamp: string }[],
   label = 'submissions'
@@ -47,12 +36,118 @@ function parseTimestamp(value: string | undefined): number {
   return parsed;
 }
 
-// ─── Merge helper ───────────────────────────────────────────────────
+// ─── Incremental Sync (Layer 3) ─────────────────────────────────────
+
+export interface IncrementalSyncResult {
+  /** Whether a gap was detected (cache needs a full rescan) */
+  gapDetected: boolean;
+  /** Number of cache entries updated from recent submissions */
+  newCount: number;
+  /** The updated cache data */
+  cache: SubmissionCacheData;
+}
 
 /**
- * Merge new submissions with existing, deduplicating by id or slug+timestamp.
- * Result is sorted descending by timestamp.
+ * Incremental sync — fetch the ~20 most recent accepted submissions
+ * and reconcile them with the existing submission cache.
+ *
+ * **Gap detection**: If none of the recent submissions overlap with
+ * the existing cache, we conclude submissions were missed and the
+ * cache needs a full rescan. (The caller triggers Layer 2.)
+ *
+ * If overlap IS found, we confidently update only the new entries
+ * and mark the cache as 'valid'.
  */
+export async function incrementalSync(
+  username: string,
+  existingCache?: SubmissionCacheData,
+): Promise<IncrementalSyncResult> {
+  const cache = existingCache ?? makeEmptyCache();
+
+  if (!username) {
+    delog('[incremental] No username — skipping');
+    return { gapDetected: false, newCount: 0, cache };
+  }
+
+  delog(`[incremental] Fetching ~20 recent accepted for ${username}…`);
+  const recent = await fetchRecentAcceptedSubmissions(username, 20);
+  delog(`[incremental] Got ${recent.length} recent accepted submissions`);
+
+  if (recent.length === 0) {
+    return { gapDetected: false, newCount: 0, cache };
+  }
+
+  validateChronologicalOrder(recent, 'recent accepted submissions');
+
+  const entries = { ...cache.entries };
+  const cacheIsEmpty = Object.keys(entries).length === 0;
+  let overlapFound = false;
+  let newCount = 0;
+  const now = Date.now();
+
+  for (const sub of recent) {
+    const existing = entries[sub.titleSlug];
+    const ts = Number(sub.timestamp);
+
+    if (existing?.solved) {
+      // This submission's problem was already in cache — overlap confirmed
+      overlapFound = true;
+
+      // Update if this submission is newer than what we have
+      if (existing.latestAcceptedTimestamp !== null && ts > existing.latestAcceptedTimestamp) {
+        entries[sub.titleSlug] = {
+          solved: true,
+          latestAcceptedTimestamp: ts,
+          checkedAt: now,
+        };
+        newCount++;
+      }
+    } else {
+      // New problem not in cache (or was marked unsolved)
+      entries[sub.titleSlug] = {
+        solved: true,
+        latestAcceptedTimestamp: ts,
+        checkedAt: now,
+      };
+      newCount++;
+    }
+  }
+
+  // Gap detection logic:
+  // - If cache was empty, no gap — we're just starting
+  // - If we found overlap with existing cache entries, continuity confirmed
+  // - If NO overlap and cache had entries, submissions were missed → stale
+  const gapDetected = !cacheIsEmpty && !overlapFound;
+
+  const updatedCache: SubmissionCacheData = {
+    entries,
+    cacheStatus: gapDetected ? 'stale' : cache.cacheStatus === 'empty' ? 'empty' : cache.cacheStatus,
+    lastFullScanAt: cache.lastFullScanAt,
+    lastIncrementalAt: now,
+    lastError: null,
+  };
+
+  await setStorage(STORAGE_KEYS.submissionCache, updatedCache);
+  delog(`[incremental] Done: ${newCount} new, gap=${gapDetected}`);
+
+  return { gapDetected, newCount, cache: updatedCache };
+}
+
+// ─── Legacy submission accumulation ─────────────────────────────────
+// Kept for backward compatibility during the migration period.
+// Once the submission cache is stable, this can be removed.
+
+export interface UpdateSubmissionsOptions {
+  username: string;
+}
+
+export interface UpdateSubmissionsResult {
+  skipped?: boolean;
+  mode?: 'full' | 'incremental' | 'failed';
+  count?: number;
+  error?: string;
+}
+
 function mergeAcceptedSubmissions(
   newList: AcceptedSubmission[],
   existingList: AcceptedSubmission[]
@@ -74,14 +169,9 @@ function mergeAcceptedSubmissions(
   return merged;
 }
 
-// ─── Main entry point ───────────────────────────────────────────────
-
 /**
- * Update submissions from LeetCode.
- *
- * Uses `recentAcSubmissionList` (public API, ~20 most recent accepted).
- * Merges with previously stored submissions so the list accumulates
- * over time. Each popup open / refresh adds any new submissions.
+ * Legacy submission accumulation via `recentAcSubmissionList`.
+ * @deprecated Use `incrementalSync` + submission cache instead.
  */
 export async function updateSubmissions(
   options: UpdateSubmissionsOptions
@@ -103,7 +193,6 @@ export async function updateSubmissions(
 
     validateChronologicalOrder(recent, 'recent accepted submissions');
 
-    // Merge with existing stored submissions (accumulate over time)
     const existingList = existing?.data?.recentAcSubmissionList ?? [];
     const merged = mergeAcceptedSubmissions(recent, existingList);
     const newCount = merged.length - existingList.length;

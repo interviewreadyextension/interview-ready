@@ -38,6 +38,20 @@ export interface RecentAcceptedResponse {
 }
 
 /**
+ * Per-problem submission list query (`questionSubmissionList` — auth required)
+ */
+export interface QuestionSubmissionListResponse {
+  questionSubmissionList: {
+    lastKey: string | null;
+    hasNext: boolean;
+    submissions: Array<{
+      timestamp: string;
+      statusDisplay: string;
+    }>;
+  };
+}
+
+/**
  * GraphQL query bodies
  */
 export interface GraphQLQuery<T = unknown> {

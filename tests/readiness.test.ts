@@ -13,6 +13,8 @@ import {
   installChromeStub,
   uninstallChromeStub,
   makeAllProblems,
+  makeCacheData,
+  makeCacheEntry,
   q,
 } from './helpers';
 
@@ -38,31 +40,51 @@ describe('buildAcceptedSet', () => {
     expect(set.size).toBe(0);
   });
 
-  test('includes slugs from submissions', () => {
-    const submissions = {
-      data: { recentAcSubmissionList: [
-        { titleSlug: 'a', id: '1', title: 'A', timestamp: '1' },
-        { titleSlug: 'b', id: '2', title: 'B', timestamp: '2' },
-      ] },
-    };
-    const set = buildAcceptedSet(submissions);
+  test('includes slugs from cache entries', () => {
+    const cache = makeCacheData({
+      a: makeCacheEntry({ solved: true }),
+      b: makeCacheEntry({ solved: true }),
+    });
+    const set = buildAcceptedSet(cache);
     expect(set.has('a')).toBe(true);
     expect(set.has('b')).toBe(true);
   });
 
-  test('filters submissions by date range', () => {
-    const submissions = {
-      data: {
-        recentAcSubmissionList: [
-          { titleSlug: 'recent', id: '1', title: 'R', timestamp: '1000' },
-          { titleSlug: 'old', id: '2', title: 'O', timestamp: '100' },
-        ],
-      },
-    };
+  test('excludes unsolved entries', () => {
+    const cache = makeCacheData({
+      solved: makeCacheEntry({ solved: true }),
+      unsolved: makeCacheEntry({ solved: false }),
+    });
+    const set = buildAcceptedSet(cache);
+    expect(set.has('solved')).toBe(true);
+    expect(set.has('unsolved')).toBe(false);
+  });
+
+  test('filters entries by date range', () => {
+    const cache = makeCacheData({
+      recent: makeCacheEntry({ solved: true, latestAcceptedTimestamp: 1000 }),
+      old: makeCacheEntry({ solved: true, latestAcceptedTimestamp: 100 }),
+    });
     // Range that includes timestamp 1000 but not 100
-    const set = buildAcceptedSet(submissions, { startSec: 500, endSec: 2000 });
+    const set = buildAcceptedSet(cache, { startSec: 500, endSec: 2000 });
     expect(set.has('recent')).toBe(true);
     expect(set.has('old')).toBe(false);
+  });
+
+  test('excludes solved entries with null timestamp when date range is active', () => {
+    const cache = makeCacheData({
+      'has-ts': makeCacheEntry({ solved: true, latestAcceptedTimestamp: 1000 }),
+      'no-ts': makeCacheEntry({ solved: true, latestAcceptedTimestamp: null }),
+    });
+    // With a date range, null-timestamp entries should be excluded
+    const filtered = buildAcceptedSet(cache, { startSec: 500, endSec: 2000 });
+    expect(filtered.has('has-ts')).toBe(true);
+    expect(filtered.has('no-ts')).toBe(false);
+
+    // Without a date range, null-timestamp entries should be included
+    const allTime = buildAcceptedSet(cache);
+    expect(allTime.has('has-ts')).toBe(true);
+    expect(allTime.has('no-ts')).toBe(true);
   });
 });
 
@@ -80,16 +102,16 @@ describe('getReadinessData', () => {
     }
   });
 
-  test('treats recent accepted as solved (even if status is not "ac")', () => {
+  test('treats cache entries as solved (even if problem status is not "ac")', () => {
     const allProblems = makeAllProblems([
       q({ titleSlug: 'x', difficulty: 'Easy', status: null, topicSlugs: ['array'] }),
     ]);
 
-    const recentAcceptedSubmissions = {
-      data: { recentAcSubmissionList: [{ titleSlug: 'x', id: '1', title: 'X', timestamp: '1' }] },
-    };
+    const cache = makeCacheData({
+      x: makeCacheEntry({ solved: true, latestAcceptedTimestamp: 1 }),
+    });
 
-    const result = getReadinessData(allProblems, recentAcceptedSubmissions);
+    const result = getReadinessData(allProblems, cache);
     expect(result.array).toBeDefined();
     expect(result.array[1]).not.toBe(0);
   });
@@ -138,7 +160,7 @@ describe('getReadinessData', () => {
 // ─── getNextPracticeProblem ────────────────────────────────────────
 
 describe('getNextPracticeProblem', () => {
-  test('excludes problems in recent accepted submissions', async () => {
+  test('excludes problems in submission cache', async () => {
     const restoreRandom = Math.random;
     Math.random = () => 0;
 
@@ -148,9 +170,9 @@ describe('getNextPracticeProblem', () => {
           q({ titleSlug: 'recently-solved', difficulty: 'Easy', status: null, topicSlugs: ['array'] }),
           q({ titleSlug: 'still-unsolved', difficulty: 'Easy', status: null, topicSlugs: ['array'] }),
         ]),
-        recentSubmissionsKey: {
-          data: { recentAcSubmissionList: [{ titleSlug: 'recently-solved' }] },
-        },
+        submissionCacheKey: makeCacheData({
+          'recently-solved': makeCacheEntry({ solved: true }),
+        }),
         userDataKey: { isPremium: false },
       },
     });
@@ -173,7 +195,7 @@ describe('getNextPracticeProblem', () => {
           q({ titleSlug: 'paid', difficulty: 'Easy', status: null, paidOnly: true, topicSlugs: ['array'] }),
           q({ titleSlug: 'free', difficulty: 'Easy', status: null, paidOnly: false, topicSlugs: ['array'] }),
         ]),
-        recentSubmissionsKey: { data: { recentAcSubmissionList: [] } },
+        submissionCacheKey: makeCacheData(),
         userDataKey: { isPremium: false },
       },
     });
@@ -192,7 +214,7 @@ describe('getNextPracticeProblem', () => {
         problemsKey: makeAllProblems([
           q({ titleSlug: 'paid', difficulty: 'Easy', status: null, paidOnly: true, topicSlugs: ['array'] }),
         ]),
-        recentSubmissionsKey: { data: { recentAcSubmissionList: [] } },
+        submissionCacheKey: makeCacheData(),
         userDataKey: { isPremium: false },
       },
     });
@@ -210,7 +232,7 @@ describe('getNextPracticeProblem', () => {
         problemsKey: makeAllProblems([
           q({ titleSlug: 'valid-problem', difficulty: 'Easy', status: null, topicSlugs: ['array'] }),
         ]),
-        recentSubmissionsKey: { data: { recentAcSubmissionList: [] } },
+        submissionCacheKey: makeCacheData(),
         userDataKey: { isPremium: false },
       },
     });
@@ -237,7 +259,7 @@ describe('getPracticeProblem', () => {
     installChromeStub({
       localData: {
         problemsKey: makeAllProblems(allQuestions),
-        recentSubmissionsKey: { data: { recentAcSubmissionList: [] } },
+        submissionCacheKey: makeCacheData(),
         userDataKey: { isPremium: false },
       },
     });
@@ -252,7 +274,7 @@ describe('getPracticeProblem', () => {
         problemsKey: makeAllProblems([
           q({ titleSlug: 'a', status: null, difficulty: 'Easy', topicSlugs: ['array'] }),
         ]),
-        recentSubmissionsKey: { data: { recentAcSubmissionList: [] } },
+        submissionCacheKey: makeCacheData(),
         userDataKey: { isPremium: false },
       },
     });
@@ -261,15 +283,15 @@ describe('getPracticeProblem', () => {
     expect(slug).toBe(null);
   });
 
-  test('review: reads recent accepts from recentSubmissionsKey', async () => {
+  test('review: reads from submissionCacheKey', async () => {
     installChromeStub({
       localData: {
         problemsKey: makeAllProblems([
           q({ titleSlug: 'two-sum', status: null, difficulty: 'Easy', topicSlugs: ['array'] }),
         ]),
-        recentSubmissionsKey: {
-          data: { recentAcSubmissionList: [{ titleSlug: 'two-sum', id: '1', title: 'Two Sum', timestamp: '1' }] },
-        },
+        submissionCacheKey: makeCacheData({
+          'two-sum': makeCacheEntry({ solved: true, latestAcceptedTimestamp: 1 }),
+        }),
         userDataKey: { isPremium: false },
       },
     });
@@ -289,7 +311,7 @@ describe('getPracticeProblem', () => {
             topicSlugs: ['array'],
           }),
         ]),
-        recentSubmissionsKey: { data: { recentAcSubmissionList: [] } },
+        submissionCacheKey: makeCacheData(),
         userDataKey: { isPremium: false },
       },
     });
@@ -308,7 +330,7 @@ describe('getPracticeProblem', () => {
         problemsKey: makeAllProblems([
           q({ titleSlug: 'some-problem', difficulty: 'Medium', status: null, topicSlugs: ['hash-table'] }),
         ]),
-        recentSubmissionsKey: { data: { recentAcSubmissionList: [] } },
+        submissionCacheKey: makeCacheData(),
         userDataKey: { isPremium: false },
       },
     });
@@ -326,7 +348,7 @@ describe('getPracticeProblem', () => {
     installChromeStub({
       localData: {
         problemsKey: makeAllProblems([]),
-        recentSubmissionsKey: { data: { recentAcSubmissionList: [] } },
+        submissionCacheKey: makeCacheData(),
         userDataKey: { isPremium: false },
       },
     });

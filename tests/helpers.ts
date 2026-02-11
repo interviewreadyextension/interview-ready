@@ -2,7 +2,7 @@
  * Test helpers — Chrome API mocks and factory functions for test data.
  */
 import type { Problem, TopicTag } from '../src/types/models';
-import type { ProblemData, SubmissionData, StorageSchema } from '../src/types/storage.types';
+import type { ProblemData, SubmissionData, SubmissionCacheData, SubmissionCacheEntry, StorageSchema } from '../src/types/storage.types';
 
 // ─── Chrome storage mock ────────────────────────────────────────────
 
@@ -86,6 +86,35 @@ export function makeAllProblems(questions: Problem[]): ProblemData {
         questions,
       },
     },
+  };
+}
+
+// ─── Submission cache factories ─────────────────────────────────────
+
+/** Create a single SubmissionCacheEntry. */
+export function makeCacheEntry(opts: {
+  solved?: boolean;
+  latestAcceptedTimestamp?: number | null;
+  checkedAt?: number;
+} = {}): SubmissionCacheEntry {
+  return {
+    solved: opts.solved ?? true,
+    latestAcceptedTimestamp: opts.latestAcceptedTimestamp ?? null,
+    checkedAt: opts.checkedAt ?? Date.now(),
+  };
+}
+
+/** Create a SubmissionCacheData from a slug→entry map. */
+export function makeCacheData(
+  entries: Record<string, SubmissionCacheEntry> = {},
+  overrides: Partial<Omit<SubmissionCacheData, 'entries'>> = {},
+): SubmissionCacheData {
+  return {
+    entries,
+    cacheStatus: overrides.cacheStatus ?? 'valid',
+    lastFullScanAt: overrides.lastFullScanAt ?? null,
+    lastIncrementalAt: overrides.lastIncrementalAt ?? null,
+    lastError: overrides.lastError ?? null,
   };
 }
 
@@ -184,14 +213,42 @@ export function makeAcSubmissionsResponse(submissions: ReturnType<typeof makeSub
 }
 
 /**
+ * Build a `questionSubmissionList` GraphQL response for a single problem.
+ * Each submission has { timestamp, statusDisplay }.
+ */
+export function makeSubmissionListResponse(
+  submissions: Array<{ timestamp: string; statusDisplay: string }>,
+  hasNext = false,
+  lastKey: string | null = null,
+) {
+  return {
+    data: {
+      questionSubmissionList: {
+        lastKey,
+        hasNext,
+        submissions,
+      },
+    },
+  };
+}
+
+/**
  * Build a fetch mock that routes GraphQL requests to the correct handler:
- *   - `getACSubmissions` → recentAcSubmissionList response
- *   - `globalData`       → user status response
+ *   - `getACSubmissions`  → recentAcSubmissionList response
+ *   - `globalData`        → user status response
+ *   - `submissionList`    → per-problem questionSubmissionList response (keyed by slug)
  */
 export function makeFetchResponder(opts: {
   acSubmissions?: ReturnType<typeof makeSubmission>[];
+  /** Per-problem submission list responses, keyed by titleSlug. */
+  perProblemResults?: Record<string, Array<{ timestamp: string; statusDisplay: string }>>;
+  /** Per-problem multi-page responses (for pagination tests). */
+  perProblemPages?: Record<string, Array<ReturnType<typeof makeSubmissionListResponse>>>;
 }) {
-  const { acSubmissions } = opts;
+  const { acSubmissions, perProblemResults, perProblemPages } = opts;
+
+  // Track per-problem page cursors for pagination
+  const pageCursors: Record<string, number> = {};
 
   return async (url: string | URL | Request, options: RequestInit = {}): Promise<Response> => {
     const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
@@ -213,6 +270,42 @@ export function makeFetchResponder(opts: {
       // Public recent-accepted endpoint (incremental sync)
       if (body.operationName === 'getACSubmissions' && acSubmissions) {
         return new Response(JSON.stringify(makeAcSubmissionsResponse(acSubmissions)), {
+          status: 200,
+          statusText: 'OK',
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Per-problem submission list (authenticated)
+      if (body.operationName === 'submissionList') {
+        const slug = body.variables?.questionSlug as string;
+
+        // Multi-page mode
+        if (perProblemPages?.[slug]) {
+          const pages = perProblemPages[slug];
+          const pageIndex = pageCursors[slug] ?? 0;
+          pageCursors[slug] = pageIndex + 1;
+          const page = pages[pageIndex] ?? makeSubmissionListResponse([]);
+          return new Response(JSON.stringify(page), {
+            status: 200,
+            statusText: 'OK',
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        // Single-page mode
+        if (perProblemResults?.[slug]) {
+          return new Response(JSON.stringify(
+            makeSubmissionListResponse(perProblemResults[slug])
+          ), {
+            status: 200,
+            statusText: 'OK',
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        // Default: empty submissions
+        return new Response(JSON.stringify(makeSubmissionListResponse([])), {
           status: 200,
           statusText: 'OK',
           headers: { 'Content-Type': 'application/json' },
