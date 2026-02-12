@@ -1,2 +1,0 @@
-Future product ideas:
-Should only count problems that were solved in the past month!
