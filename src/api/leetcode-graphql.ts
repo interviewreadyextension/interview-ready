@@ -22,6 +22,7 @@ async function queryData<T>(queryBody: string): Promise<GraphQLResponse<T>> {
       'content-type': 'application/json',
       'Referer': 'https://leetcode.com',
     },
+    credentials: 'include',
     body: queryBody,
     method: 'POST',
   });

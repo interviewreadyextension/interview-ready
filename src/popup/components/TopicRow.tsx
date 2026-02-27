@@ -20,12 +20,12 @@ interface TopicRowProps {
 const DIFFICULTIES: PracticeTarget[] = ['suggested', 'easy', 'medium', 'hard', 'random'];
 
 export const TopicRow: FC<TopicRowProps> = ({ topic, status, percentage, availability, onTopicClick }) => {
-  if (availability.suggested.total === 0) return null;
+  if (availability.random.total === 0) return null;
 
   const readinessText =
     status === 'ready'
-      ? `Ready %${percentage.toFixed()}`
-      : `%${percentage.toFixed()}`;
+      ? `Ready ${percentage.toFixed()}%`
+      : `${percentage.toFixed()}%`;
 
   return (
     <div className="topicStatus">
