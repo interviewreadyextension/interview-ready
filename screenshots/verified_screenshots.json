@@ -1,0 +1,37 @@
+{
+  "screenshot_dir": "C:\\repos\\interview-ready\\screenshots",
+  "valid_dimensions": [
+    "1280x800",
+    "640x400"
+  ],
+  "all_verified": true,
+  "total": 4,
+  "verified_count": 4,
+  "failed_count": 0,
+  "screenshots": {
+    "v2-dashboard.png": {
+      "width": 1280,
+      "height": 800,
+      "verified": true,
+      "dimensions_str": "1280x800"
+    },
+    "v2-initial-load.png": {
+      "width": 1280,
+      "height": 800,
+      "verified": true,
+      "dimensions_str": "1280x800"
+    },
+    "v2-submission-history-load-progress-1.png": {
+      "width": 1280,
+      "height": 800,
+      "verified": true,
+      "dimensions_str": "1280x800"
+    },
+    "v2-submission-history-load-progress-2.png": {
+      "width": 1280,
+      "height": 800,
+      "verified": true,
+      "dimensions_str": "1280x800"
+    }
+  }
+}

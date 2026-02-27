@@ -5,3 +5,5 @@ _old_src/
 .env
 .DS_Store
 .vscode/
+.venv/
+*.secret.json
