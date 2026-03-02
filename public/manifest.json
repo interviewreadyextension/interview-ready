@@ -1,7 +1,7 @@
 {
   "name": "Interview Ready",
   "description": "This extension is designed to help you become interview ready!",
-  "version": "0.98",
+  "version": "0.99",
   "manifest_version": 3,
   "content_scripts": [
     {

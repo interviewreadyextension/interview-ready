@@ -140,7 +140,7 @@ export async function buildSubmissionCache(
     const problem = toQuery[i];
 
     try {
-      const result = await fetchLatestAcceptedForProblem(problem.titleSlug);
+      const result = await fetchLatestAcceptedForProblem(problem.titleSlug, 3, signal);
       entries[problem.titleSlug] = {
         solved: result.solved,
         latestAcceptedTimestamp: result.latestAcceptedTimestamp,

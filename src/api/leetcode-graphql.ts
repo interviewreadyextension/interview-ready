@@ -13,25 +13,43 @@ import type { UserStatus, AcceptedSubmission } from '../types/models';
  */
 export const LEETCODE_GRAPHQL_URL = 'https://leetcode.com/graphql/';
 
+const REQUEST_TIMEOUT_MS = 15_000; // 15s per request
+const MAX_RETRIES = 3;
+const RETRY_BASE_MS = 1_000; // 1s, 2s, 4s exponential backoff
+
 // ─── Low-level fetch helper ────────────────────────────────────────
 
 /** Execute a GraphQL POST against LeetCode. */
-async function queryData<T>(queryBody: string): Promise<GraphQLResponse<T>> {
-  const response = await fetch(LEETCODE_GRAPHQL_URL, {
-    headers: {
-      'content-type': 'application/json',
-      'Referer': 'https://leetcode.com',
-    },
-    credentials: 'include',
-    body: queryBody,
-    method: 'POST',
-  });
+async function queryData<T>(queryBody: string, signal?: AbortSignal): Promise<GraphQLResponse<T>> {
+  // Combine caller signal with per-request timeout
+  const timeoutController = new AbortController();
+  const timer = setTimeout(() => timeoutController.abort(), REQUEST_TIMEOUT_MS);
 
-  if (!response.ok) {
-    throw new Error(`GraphQL request failed: ${response.status} ${response.statusText}`);
+  // If the caller's signal fires, also abort the request
+  const onCallerAbort = () => timeoutController.abort();
+  signal?.addEventListener('abort', onCallerAbort, { once: true });
+
+  try {
+    const response = await fetch(LEETCODE_GRAPHQL_URL, {
+      headers: {
+        'content-type': 'application/json',
+        'Referer': 'https://leetcode.com',
+      },
+      credentials: 'include',
+      body: queryBody,
+      method: 'POST',
+      signal: timeoutController.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`GraphQL request failed: ${response.status} ${response.statusText}`);
+    }
+
+    return response.json();
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', onCallerAbort);
   }
-
-  return response.json();
 }
 
 // ─── Public API functions ───────────────────────────────────────────
@@ -130,21 +148,42 @@ const SUBMISSION_LIST_QUERY = `query submissionList(
 export async function fetchLatestAcceptedForProblem(
   titleSlug: string,
   maxPages = 3,
+  signal?: AbortSignal,
 ): Promise<ProblemSolveResult> {
   let offset = 0;
   let lastKey: string | null = null;
   const limit = 20;
 
   for (let page = 0; page < maxPages; page++) {
+    if (signal?.aborted) break;
+
     const query: GraphQLQuery = {
       operationName: 'submissionList',
       query: SUBMISSION_LIST_QUERY,
       variables: { questionSlug: titleSlug, offset, limit, lastKey },
     };
 
-    const result = await queryData<QuestionSubmissionListResponse>(
-      JSON.stringify(query),
-    );
+    const body = JSON.stringify(query);
+    let result: GraphQLResponse<QuestionSubmissionListResponse> | null = null;
+
+    // Retry with exponential backoff for transient failures
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      if (signal?.aborted) break;
+      try {
+        result = await queryData<QuestionSubmissionListResponse>(body, signal);
+        break; // success
+      } catch (err) {
+        if (signal?.aborted) break;
+        if (attempt < MAX_RETRIES - 1) {
+          const backoff = RETRY_BASE_MS * Math.pow(2, attempt);
+          await new Promise(r => setTimeout(r, backoff));
+        } else {
+          throw err; // exhausted retries
+        }
+      }
+    }
+
+    if (!result) break;
 
     const qsl = result.data.questionSubmissionList;
     if (!qsl || qsl.submissions.length === 0) break;

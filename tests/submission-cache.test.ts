@@ -109,6 +109,8 @@ describe('buildSubmissionCache', () => {
   });
 
   test('per-problem error does not abort scan', async () => {
+    // Use fake timers so retry backoff delays resolve instantly
+    vi.useFakeTimers();
     const problems = [
       q({ titleSlug: 'will-fail', status: 'ac' }),
       q({ titleSlug: 'will-succeed', status: 'ac' }),
@@ -141,10 +143,19 @@ describe('buildSubmissionCache', () => {
     });
 
     const cache = makeEmptyCache();
-    const result = await buildSubmissionCache(problems, TargetedStrategy, cache);
+    // Run the build and advance timers concurrently so retry backoff resolves
+    const buildPromise = buildSubmissionCache(problems, TargetedStrategy, cache);
 
-    // Both problems should have been attempted
-    expect(callCount).toBe(2);
+    // Flush all pending timers (retry backoff + throttle delays)
+    // Need to await micro-tasks between timer advances for async flow
+    for (let i = 0; i < 20; i++) {
+      await vi.advanceTimersByTimeAsync(5_000);
+    }
+
+    const result = await buildPromise;
+
+    // will-fail is retried 3 times (MAX_RETRIES), will-succeed called once = 4 total
+    expect(callCount).toBe(4);
 
     // Failed one is marked unsolved
     expect(result.entries['will-fail'].solved).toBe(false);
@@ -156,6 +167,7 @@ describe('buildSubmissionCache', () => {
 
     // Cache still marked valid (scan completed)
     expect(result.cacheStatus).toBe('valid');
+    vi.useRealTimers();
   });
 
   test('already-cached entries are skipped (no extra API calls)', async () => {
