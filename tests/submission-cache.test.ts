@@ -277,4 +277,75 @@ describe('buildSubmissionCache', () => {
     expect(result.cacheStatus).toBe('valid');
     expect(result.lastFullScanAt).toBeGreaterThan(0);
   });
+
+  // ─── refreshRequestedAt (incremental forced refresh) ──────────────
+
+  test('forced refresh: re-queries stale entries, preserves fresh ones', async () => {
+    const problems = [
+      q({ titleSlug: 'stale-problem', status: 'ac' }),
+      q({ titleSlug: 'fresh-problem', status: 'ac' }),
+    ];
+
+    let apiCalls: string[] = [];
+    restoreFetch = installFetchMock(async (url, options) => {
+      const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
+      if (urlStr === 'https://leetcode.com/graphql/') {
+        const body = JSON.parse(options?.body as string ?? '{}');
+        if (body.operationName === 'submissionList') {
+          apiCalls.push(body.variables?.questionSlug);
+          return new Response(JSON.stringify({
+            data: {
+              questionSubmissionList: {
+                lastKey: null,
+                hasNext: false,
+                submissions: [{ timestamp: '9999', statusDisplay: 'Accepted' }],
+              },
+            },
+          }), { status: 200, statusText: 'OK', headers: { 'Content-Type': 'application/json' } });
+        }
+      }
+      throw new Error(`Unexpected fetch: ${urlStr}`);
+    });
+
+    // Cache with refreshRequestedAt=5000:
+    //   stale-problem was checked at 1000 (before refresh) → should be re-queried
+    //   fresh-problem was checked at 8000 (after refresh) → should be skipped
+    const existingCache = makeCacheData({
+      'stale-problem': makeCacheEntry({ solved: true, latestAcceptedTimestamp: 100, checkedAt: 1000 }),
+      'fresh-problem': makeCacheEntry({ solved: true, latestAcceptedTimestamp: 200, checkedAt: 8000 }),
+    }, { cacheStatus: 'stale', refreshRequestedAt: 5000 });
+
+    const result = await buildSubmissionCache(problems, TargetedStrategy, existingCache);
+
+    // Only the stale entry was re-queried
+    expect(apiCalls).toEqual(['stale-problem']);
+
+    // Stale entry has new timestamp from API
+    expect(result.entries['stale-problem'].latestAcceptedTimestamp).toBe(9999);
+
+    // Fresh entry preserved — not re-queried
+    expect(result.entries['fresh-problem'].latestAcceptedTimestamp).toBe(200);
+  });
+
+  test('refreshRequestedAt is cleared on successful completion', async () => {
+    const problems = [
+      q({ titleSlug: 'only-one', status: 'ac' }),
+    ];
+
+    restoreFetch = installFetchMock(makeFetchResponder({
+      perProblemResults: {
+        'only-one': [{ timestamp: '5000', statusDisplay: 'Accepted' }],
+      },
+    }));
+
+    const existingCache = makeCacheData({
+      'only-one': makeCacheEntry({ solved: true, checkedAt: 1000 }),
+    }, { cacheStatus: 'stale', refreshRequestedAt: 2000 });
+
+    const result = await buildSubmissionCache(problems, TargetedStrategy, existingCache);
+
+    // Scan completed successfully — refreshRequestedAt should be cleared
+    expect(result.refreshRequestedAt).toBeNull();
+    expect(result.cacheStatus).toBe('valid');
+  });
 });

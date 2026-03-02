@@ -87,11 +87,21 @@ async function syncAll(): Promise<void> {
     return;
   }
 
+  // Check if the popup requested a forced refresh
+  const refreshTime = await getStorage(STORAGE_KEYS.refreshTrigger) as number | undefined;
+  const existingProblems = await getStorage(STORAGE_KEYS.problems);
+  const forceRefresh = !!(refreshTime &&
+    (!existingProblems?.fetchCompletedAt || refreshTime > existingProblems.fetchCompletedAt));
+
+  if (forceRefresh) {
+    delog('Pending manual refresh detected — bypassing TTL');
+  }
+
   const existingCache = (await getStorage(STORAGE_KEYS.submissionCache)) ?? makeEmptyCache();
 
   // Layer 1 (problems) and Layer 3 (incremental) run concurrently
   const [, incrementalResult] = await Promise.all([
-    updateProblemsFromLeetCode()
+    updateProblemsFromLeetCode(forceRefresh ? { fetchTtlMs: 0 } : {})
       .catch(err => {
         delogError('Problem sync failed', err);
         return null;
@@ -104,14 +114,27 @@ async function syncAll(): Promise<void> {
       }),
   ]);
 
-  // Layer 2: full scan if needed (requires Layer 1 to have completed)
-  const latestCache = incrementalResult?.cache ?? existingCache;
-  const needsFullScan = incrementalResult?.gapDetected
-    || latestCache.cacheStatus === 'empty'
-    || latestCache.cacheStatus === 'stale';
+  // If forced refresh, clear the trigger and re-scan all ac problems.
+  // Keep existing entries (popup still shows data) but set refreshRequestedAt
+  // so the strategy treats entries checked before the refresh as stale.
+  if (forceRefresh) {
+    await chrome.storage.local.remove(STORAGE_KEYS.refreshTrigger);
+    await runFullScanIfNeeded({
+      ...existingCache,
+      cacheStatus: 'stale',
+      refreshRequestedAt: Date.now(),
+    });
+  } else {
+    // Layer 2: full scan if needed (requires Layer 1 to have completed)
+    const latestCache = incrementalResult?.cache ?? existingCache;
+    const needsFullScan = incrementalResult?.gapDetected
+      || latestCache.cacheStatus === 'empty'
+      || latestCache.cacheStatus === 'stale'
+      || latestCache.cacheStatus === 'building';
 
-  if (needsFullScan) {
-    await runFullScanIfNeeded(latestCache);
+    if (needsFullScan) {
+      await runFullScanIfNeeded(latestCache);
+    }
   }
 }
 

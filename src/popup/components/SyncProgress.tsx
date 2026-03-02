@@ -50,7 +50,7 @@ const AnimatedNumber: FC<{ value: number; duration?: number }> = ({ value, durat
 
     rafRef.current = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(rafRef.current);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value, duration]);
 
   return <span className="sync-number">{display.toLocaleString()}</span>;
@@ -99,6 +99,8 @@ const ProgressRow: FC<{ progress: SyncProgress }> = ({ progress }) => {
  */
 export const SyncProgressBar: FC = () => {
   const [phases, setPhases] = useState<Record<string, SyncProgress>>({});
+  const [stalled, setStalled] = useState(false);
+  const lastUpdateRef = useRef(Date.now());
 
   useEffect(() => {
     // Load initial
@@ -107,6 +109,7 @@ export const SyncProgressBar: FC = () => {
       for (const key of PROGRESS_KEYS) {
         if (result[key]) initial[key] = result[key] as SyncProgress;
       }
+      if (Object.keys(initial).length > 0) lastUpdateRef.current = Date.now();
       setPhases(initial);
     });
 
@@ -114,6 +117,8 @@ export const SyncProgressBar: FC = () => {
     function listener(changes: Record<string, chrome.storage.StorageChange>) {
       for (const key of PROGRESS_KEYS) {
         if (changes[key]) {
+          lastUpdateRef.current = Date.now();
+          setStalled(false);
           const val = changes[key].newValue as SyncProgress | undefined;
           setPhases(prev => {
             const next = { ...prev };
@@ -131,6 +136,26 @@ export const SyncProgressBar: FC = () => {
     return () => chrome.storage.onChanged.removeListener(listener);
   }, []);
 
+  // Check for stalled progress every 2 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setPhases(current => {
+        if (Object.keys(current).length > 0) {
+          const elapsed = Date.now() - lastUpdateRef.current;
+          setStalled(elapsed > 5000);
+        } else {
+          setStalled(false);
+        }
+        return current;
+      });
+    }, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleResume = () => {
+    chrome.tabs.create({ url: 'https://leetcode.com', active: false });
+  };
+
   const activePhases = Object.values(phases);
   if (activePhases.length === 0) return null;
 
@@ -139,6 +164,11 @@ export const SyncProgressBar: FC = () => {
       {activePhases.map((p) => (
         <ProgressRow key={p.phase} progress={p} />
       ))}
+      {stalled && (
+        <div className="sync-stalled">
+          Sync paused — <a href="#" onClick={(e) => { e.preventDefault(); handleResume(); }}>resume syncing</a>
+        </div>
+      )}
     </>
   );
 };

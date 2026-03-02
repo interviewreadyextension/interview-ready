@@ -30,7 +30,7 @@ function flattenPopupHtml(): Plugin {
  * Static assets (manifest.json, images, options page) live in public/
  * and are copied as-is into dist/.
  */
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [react(), flattenPopupHtml()],
   resolve: {
     alias: {
@@ -40,7 +40,10 @@ export default defineConfig({
   publicDir: 'public',
   build: {
     outDir: 'dist',
-    emptyOutDir: true,
+    // Only empty outDir during production builds, not watch mode.
+    // In watch mode, both popup and content script builds run concurrently,
+    // so wiping dist/ would delete the content script output.
+    emptyOutDir: command === 'build' && !process.argv.includes('--watch'),
     rollupOptions: {
       input: {
         popup: resolve(__dirname, 'src/popup/index.html'),
@@ -52,4 +55,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

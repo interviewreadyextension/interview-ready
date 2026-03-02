@@ -5,13 +5,13 @@ import path from 'node:path';
 const manifestPath = path.resolve(__dirname, '../public/manifest.json');
 
 describe('manifest.json', () => {
-  test('declares tabs and storage permissions', async () => {
+  test('declares storage permission only (no tabs)', async () => {
     const raw = await fs.readFile(manifestPath, 'utf8');
     const manifest = JSON.parse(raw);
 
     const permissions = new Set(manifest.permissions ?? []);
-    expect(permissions.has('tabs')).toBe(true);
     expect(permissions.has('storage')).toBe(true);
+    expect(permissions.has('tabs')).toBe(false);
   });
 
   test('content script matches leetcode.com and points at onsite/content-script.js', async () => {

@@ -75,8 +75,31 @@ export async function updateProblemsFromLeetCode(
       chrome.storage.local.set({ [SYNC_PROGRESS_KEY]: p });
     };
 
-    const { total, questions } = await fetchAllProblemsFromLeetCode(0, reportProgress);
+    const { total, questions, error: fetchError } = await fetchAllProblemsFromLeetCode(0, reportProgress);
     const completedAt = Date.now();
+
+    if (fetchError) {
+      // Partial results — save what we got so the extension isn't empty
+      const partialData = questions.length > 0
+        ? { problemsetQuestionList: { total, questions } }
+        : existing?.data ?? { problemsetQuestionList: { total: 0, questions: [] } };
+
+      await setStorage(STORAGE_KEYS.problems, {
+        data: partialData,
+        source: 'leetcode',
+        fetchStartedAt: now,
+        fetchCompletedAt: 0,  // not fully complete
+        lastAttemptAt: now,
+        lastError: fetchError,
+        timeStamp: completedAt,
+        usingCache: true,
+      });
+
+      delog(`Problem sync partial: ${questions.length}/${total} fetched. Error: ${fetchError}`);
+      chrome.storage.local.remove(SYNC_PROGRESS_KEY);
+      _problemFetchInFlight = false;
+      return { skipped: false, count: questions.length, error: fetchError, usingCache: true };
+    }
 
     await setStorage(STORAGE_KEYS.problems, {
       data: { problemsetQuestionList: { total, questions } },
@@ -96,7 +119,7 @@ export async function updateProblemsFromLeetCode(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 
-    // Keep cached data, record the error, clear semaphore
+    // Unexpected error — keep cached data, record the error
     await setStorage(STORAGE_KEYS.problems, {
       ...existing,
       data: existing?.data ?? { problemsetQuestionList: { total: 0, questions: [] } },

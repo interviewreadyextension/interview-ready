@@ -36,25 +36,11 @@ import './App.css';
 
 // ─── Helpers ────────────────────────────────────────────────
 
-/** Navigate the active tab to a LeetCode problem. */
+/** Open a LeetCode problem in a new tab. */
 function openProblem(slug: string): void {
   const url = `https://leetcode.com/problems/${slug}`;
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const tab = tabs[0];
-    if (tab?.id) {
-      chrome.tabs.update(tab.id, { url });
-      window.close();
-    }
-  });
-}
-
-/** Ensure at least one LeetCode tab exists (needed for the content script). */
-function ensureLeetCodeTab(): void {
-  chrome.tabs.query({ url: '*://leetcode.com/*' }, (tabs) => {
-    if (tabs.length === 0) {
-      chrome.tabs.create({ url: 'https://leetcode.com', active: false });
-    }
-  });
+  chrome.tabs.create({ url, active: true });
+  window.close();
 }
 
 // ─── Main App ───────────────────────────────────────────────
@@ -159,12 +145,20 @@ export const App: FC = () => {
   }, [problemData, cacheData, isPremium, dateRange]);
 
   const handleRefresh = useCallback(() => {
+    const confirmed = window.confirm(
+      'Rebuilding the submission cache can take 3–5 minutes. Continue?'
+    );
+    if (!confirmed) return;
+
     setRefreshing(true);
+    // Clear stale progress bars before starting fresh
+    chrome.storage.local.remove(['_syncProgress_problems', '_syncProgress_submissions']);
     chrome.storage.local.set({
       refresh_problems: Date.now(),
       modal_opened: Date.now(),
     });
-    ensureLeetCodeTab();
+    // Open a LeetCode tab so the content script can pick up the refresh trigger
+    chrome.tabs.create({ url: 'https://leetcode.com', active: false });
     setTimeout(() => setRefreshing(false), 2000);
   }, []);
 

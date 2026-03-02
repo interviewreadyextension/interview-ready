@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { TargetedStrategy, EagerStrategy } from '../src/sync/scan-strategy';
+import { TargetedStrategy } from '../src/sync/scan-strategy';
 import { q, makeCacheEntry } from './helpers';
 
 // ─── TargetedStrategy ──────────────────────────────────────────────
@@ -56,31 +56,43 @@ describe('TargetedStrategy', () => {
     expect(toQuery.map(p => p.titleSlug)).toEqual(['a', 'd']);
     expect(toMarkUnsolved.map(p => p.titleSlug)).toEqual(['b', 'c']);
   });
-});
 
-// ─── EagerStrategy ─────────────────────────────────────────────────
+  // ─── refreshRequestedAt (forced refresh) ────────────────────────
 
-describe('EagerStrategy', () => {
-  test('routes all attempted problems to toQuery', () => {
+  test('forced refresh: re-queries cached entries checked before refresh', () => {
     const problems = [
-      q({ titleSlug: 'solved', status: 'ac' }),
-      q({ titleSlug: 'failed', status: 'notac' }),
-      q({ titleSlug: 'untouched', status: null }),
-    ];
-    const { toQuery, toMarkUnsolved } = EagerStrategy.partition(problems, {});
-    expect(toQuery.map(p => p.titleSlug)).toEqual(['solved', 'failed']);
-    expect(toMarkUnsolved).toHaveLength(0);
-  });
-
-  test('skips already-cached problems', () => {
-    const problems = [
-      q({ titleSlug: 'cached', status: 'ac' }),
-      q({ titleSlug: 'not-cached', status: 'notac' }),
+      q({ titleSlug: 'stale-entry', status: 'ac' }),
+      q({ titleSlug: 'fresh-entry', status: 'ac' }),
     ];
     const existingCache = {
-      cached: makeCacheEntry({ solved: true }),
+      'stale-entry': makeCacheEntry({ solved: true, checkedAt: 1000 }),
+      'fresh-entry': makeCacheEntry({ solved: true, checkedAt: 3000 }),
     };
-    const { toQuery } = EagerStrategy.partition(problems, existingCache);
-    expect(toQuery.map(p => p.titleSlug)).toEqual(['not-cached']);
+    // Refresh requested at t=2000: stale-entry (checked at 1000) is stale, fresh-entry (3000) is fresh
+    const { toQuery } = TargetedStrategy.partition(problems, existingCache, 2000);
+    expect(toQuery.map(p => p.titleSlug)).toEqual(['stale-entry']);
+  });
+
+  test('forced refresh: skips entries checked after refresh was requested', () => {
+    const problems = [
+      q({ titleSlug: 'already-refreshed', status: 'ac' }),
+    ];
+    const existingCache = {
+      'already-refreshed': makeCacheEntry({ solved: true, checkedAt: 5000 }),
+    };
+    const { toQuery } = TargetedStrategy.partition(problems, existingCache, 2000);
+    expect(toQuery).toHaveLength(0);
+  });
+
+  test('no refresh: skips all cached entries regardless of checkedAt', () => {
+    const problems = [
+      q({ titleSlug: 'old-entry', status: 'ac' }),
+    ];
+    const existingCache = {
+      'old-entry': makeCacheEntry({ solved: true, checkedAt: 1 }),
+    };
+    // No refreshRequestedAt — old entries are kept
+    const { toQuery } = TargetedStrategy.partition(problems, existingCache);
+    expect(toQuery).toHaveLength(0);
   });
 });

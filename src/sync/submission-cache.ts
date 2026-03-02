@@ -22,7 +22,7 @@ import type { ScanStrategy } from './scan-strategy';
 import { delay } from '../shared/utils';
 import { delog, delogError } from '../shared/logging';
 
-const THROTTLE_MS = 30;
+const THROTTLE_MS = 350;
 const CHECKPOINT_INTERVAL = 10; // write to storage every N problems
 const SYNC_PROGRESS_KEY = '_syncProgress_submissions';
 
@@ -70,7 +70,7 @@ export async function buildSubmissionCache(
   signal?: AbortSignal,
 ): Promise<SubmissionCacheData> {
   const entries = { ...existingCache.entries };
-  const { toQuery, toMarkUnsolved } = strategy.partition(problems, entries);
+  const { toQuery, toMarkUnsolved } = strategy.partition(problems, entries, existingCache.refreshRequestedAt);
 
   if (toQuery.length === 0 && toMarkUnsolved.length === 0) {
     delog('[cache] Nothing to scan — cache already covers all problems');
@@ -94,9 +94,11 @@ export async function buildSubmissionCache(
     };
   }
 
-  // Progress tracks only API calls (toQuery), not the instant toMarkUnsolved
-  let fetched = 0;
-  const totalToQuery = toQuery.length;
+  // Progress includes already-cached entries so resumed scans don't look like restarts.
+  // e.g. if 200 of 493 were cached, progress starts at 200/493 instead of 0/293.
+  const alreadyCached = problems.filter(p => p.status === 'ac' && !toQuery.find(q => q.titleSlug === p.titleSlug)).length;
+  let fetched = alreadyCached;
+  const totalToQuery = toQuery.length + alreadyCached;
 
   const reportProgress = (phase: string) => {
     const progress: ScanProgress = { fetched, total: totalToQuery, phase };
@@ -124,6 +126,7 @@ export async function buildSubmissionCache(
   const cacheInProgress: SubmissionCacheData = {
     entries,
     cacheStatus: 'building',
+    refreshRequestedAt: existingCache.refreshRequestedAt,
     lastFullScanAt: existingCache.lastFullScanAt,
     lastIncrementalAt: existingCache.lastIncrementalAt,
     lastError: null,
@@ -174,10 +177,11 @@ export async function buildSubmissionCache(
     }
   }
 
-  // Final write
+  // Final write — clear refreshRequestedAt on successful completion
   const completedCache: SubmissionCacheData = {
     entries,
     cacheStatus: signal?.aborted ? existingCache.cacheStatus : 'valid',
+    refreshRequestedAt: signal?.aborted ? existingCache.refreshRequestedAt : null,
     lastFullScanAt: signal?.aborted ? existingCache.lastFullScanAt : Date.now(),
     lastIncrementalAt: existingCache.lastIncrementalAt,
     lastError: null,

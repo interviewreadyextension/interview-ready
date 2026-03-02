@@ -1,4 +1,4 @@
-import { describe, test, expect, afterEach } from 'vitest';
+import { describe, test, expect, vi, afterEach } from 'vitest';
 import { fetchLatestAcceptedForProblem } from '../src/api/leetcode-graphql';
 import { installFetchMock, makeFetchResponder, makeSubmissionListResponse } from './helpers';
 
@@ -94,5 +94,67 @@ describe('fetchLatestAcceptedForProblem', () => {
     const result = await fetchLatestAcceptedForProblem('unknown-problem');
     expect(result.solved).toBe(false);
     expect(result.latestAcceptedTimestamp).toBeNull();
+  });
+});
+
+// ─── fetchAllProblemsFromLeetCode ───────────────────────────────────
+
+import { fetchAllProblemsFromLeetCode } from '../src/api/leetcode-problems';
+
+// Stub the delay so tests don't wait for throttling
+vi.mock('../src/shared/utils', () => ({
+  delay: () => Promise.resolve(),
+}));
+
+describe('fetchAllProblemsFromLeetCode', () => {
+
+  test('returns partial results when a batch fails mid-fetch', async () => {
+    let batchCalls = 0;
+
+    restoreFetch = installFetchMock(async (url, options) => {
+      const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
+      if (urlStr === 'https://leetcode.com/graphql/') {
+        batchCalls++;
+
+        if (batchCalls === 1) {
+          // First batch: succeeds with 3 problems (total in API is 5)
+          return new Response(JSON.stringify({
+            data: {
+              problemsetQuestionList: {
+                total: 5,
+                questions: [
+                  {
+                    titleSlug: 'two-sum', status: 'ac', difficulty: 'Easy', acRate: 50,
+                    frontendQuestionId: '1', isFavor: false, isPaidOnly: false,
+                    title: 'Two Sum', topicTags: [], hasSolution: false, hasVideoSolution: false
+                  },
+                  {
+                    titleSlug: 'add-two', status: null, difficulty: 'Medium', acRate: 40,
+                    frontendQuestionId: '2', isFavor: false, isPaidOnly: false,
+                    title: 'Add Two', topicTags: [], hasSolution: false, hasVideoSolution: false
+                  },
+                  {
+                    titleSlug: 'three-sum', status: 'notac', difficulty: 'Medium', acRate: 30,
+                    frontendQuestionId: '3', isFavor: false, isPaidOnly: false,
+                    title: 'Three Sum', topicTags: [], hasSolution: false, hasVideoSolution: false
+                  },
+                ],
+              },
+            },
+          }), { status: 200, statusText: 'OK', headers: { 'Content-Type': 'application/json' } });
+        }
+
+        // Second batch: network failure
+        throw new Error('Network error');
+      }
+      throw new Error(`Unexpected fetch: ${urlStr}`);
+    });
+
+    const result = await fetchAllProblemsFromLeetCode();
+
+    // Partial results: first batch (3 problems) returned despite second batch failure
+    expect(result.questions).toHaveLength(3);
+    expect(result.questions[0].titleSlug).toBe('two-sum');
+    expect(result.error).toBe('Network error');
   });
 });

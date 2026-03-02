@@ -87,13 +87,20 @@ export type OnProgressCallback = (progress: FetchProgress) => void;
 export async function fetchAllProblemsFromLeetCode(
   startOffset = 0,
   onProgress?: OnProgressCallback,
-): Promise<{ total: number; questions: Problem[] }> {
+): Promise<{ total: number; questions: Problem[]; error?: string }> {
   const questions: Problem[] = [];
   let offset = startOffset;
   let total: number | null = null;
 
   while (total === null || questions.length < total) {
-    const batch = await fetchBatch(offset, BATCH_SIZE);
+    let batch: ProblemBatchResult;
+    try {
+      batch = await fetchBatch(offset, BATCH_SIZE);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      delog(`[problemBatch] Error at offset ${offset}: ${message}. Returning ${questions.length} partial results.`);
+      return { total: total ?? questions.length, questions, error: message };
+    }
 
     if (total === null) {
       total = batch.total;

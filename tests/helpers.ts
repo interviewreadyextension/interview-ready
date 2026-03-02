@@ -112,6 +112,7 @@ export function makeCacheData(
   return {
     entries,
     cacheStatus: overrides.cacheStatus ?? 'valid',
+    refreshRequestedAt: overrides.refreshRequestedAt ?? null,
     lastFullScanAt: overrides.lastFullScanAt ?? null,
     lastIncrementalAt: overrides.lastIncrementalAt ?? null,
     lastError: overrides.lastError ?? null,

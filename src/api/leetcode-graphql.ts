@@ -5,7 +5,7 @@ import type {
   RecentAcceptedResponse,
   QuestionSubmissionListResponse,
 } from '../types/leetcode.types';
-import type { UserStatus, AcceptedSubmission } from '../types/models';
+import type { UserStatus } from '../types/models';
 
 /**
  * Shared LeetCode GraphQL endpoint.
@@ -75,17 +75,13 @@ export async function fetchUserStatus(): Promise<UserStatus> {
 export async function fetchRecentAcceptedSubmissions(
   username: string,
   limit: number = 20
-): Promise<AcceptedSubmission[]> {
+): Promise<{ titleSlug: string; timestamp: string }[]> {
   const query: GraphQLQuery<{ username: string; limit: number }> = {
     operationName: 'getACSubmissions',
     query: `query getACSubmissions($username: String!, $limit: Int) {
   recentAcSubmissionList(username: $username, limit: $limit) {
-    id
-    title
     titleSlug
     timestamp
-    statusDisplay
-    lang
   }
 }`,
     variables: { username, limit },
@@ -98,10 +94,7 @@ export async function fetchRecentAcceptedSubmissions(
     throw new Error('Unexpected recentAcSubmissionList response from LeetCode');
   }
 
-  // Normalize to our AcceptedSubmission shape
   return list.map((item) => ({
-    id: String(item.id ?? ''),
-    title: item.title ?? '',
     titleSlug: item.titleSlug ?? '',
     timestamp: String(item.timestamp ?? ''),
   }));
@@ -147,12 +140,12 @@ const SUBMISSION_LIST_QUERY = `query submissionList(
  */
 export async function fetchLatestAcceptedForProblem(
   titleSlug: string,
-  maxPages = 3,
+  maxPages = 5,
   signal?: AbortSignal,
 ): Promise<ProblemSolveResult> {
   let offset = 0;
   let lastKey: string | null = null;
-  const limit = 20;
+  const limit = 5;
 
   for (let page = 0; page < maxPages; page++) {
     if (signal?.aborted) break;

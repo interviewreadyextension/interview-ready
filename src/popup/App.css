@@ -455,6 +455,20 @@ button.practice {
   animation: loading-slide 1.2s ease-in-out infinite;
 }
 
+.sync-stalled {
+  font-size: 12px;
+  color: #999;
+  text-align: center;
+  padding: 2px 0 6px;
+  font-style: italic;
+}
+
+.sync-stalled a {
+  color: #ffa116;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 /** info summary */
 .info-summary {
   display: flex;

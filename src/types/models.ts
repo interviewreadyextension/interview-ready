@@ -34,20 +34,6 @@ export interface TopicTag {
   slug: string;
 }
 
-// ─── Accepted Submission ────────────────────────────────────────────
-
-/**
- * A single accepted submission, normalised from various LeetCode APIs.
- * `timestamp` is a Unix‑second value stored as a string (LeetCode convention).
- */
-export interface AcceptedSubmission {
-  id: string;
-  title: string;
-  titleSlug: string;
-  /** Unix timestamp in seconds, stored as a string */
-  timestamp: string;
-}
-
 // ─── User Status ────────────────────────────────────────────────────
 
 /** Current user status returned by the `globalData` GraphQL query. */

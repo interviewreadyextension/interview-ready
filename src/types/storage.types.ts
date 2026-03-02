@@ -8,7 +8,7 @@
  * each key.
  */
 
-import type { Problem, AcceptedSubmission, UserStatus } from './models';
+import type { Problem, UserStatus } from './models';
 
 // ─── Storage Schema ─────────────────────────────────────────────────
 
@@ -70,7 +70,7 @@ export interface ProblemData {
  */
 export interface SubmissionData {
   data: {
-    recentAcSubmissionList: AcceptedSubmission[];
+    recentAcSubmissionList: Array<{ titleSlug: string; timestamp: string }>;
   };
   source?: string;
   firstSyncedAt?: number;          // Unix ms – first-ever sync timestamp
@@ -113,6 +113,8 @@ export interface SubmissionCacheData {
   entries: Record<string, SubmissionCacheEntry>;
   /** Lifecycle status — drives sync decisions */
   cacheStatus: CacheStatus;
+  /** Unix ms when a forced refresh was requested. Entries with checkedAt < this need re-querying. */
+  refreshRequestedAt?: number | null;
   /** Unix ms of last completed full scan (null if never) */
   lastFullScanAt: number | null;
   /** Unix ms of last incremental sync */

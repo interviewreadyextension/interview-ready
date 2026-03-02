@@ -6,10 +6,18 @@ Chrome Extension (Manifest V3) built with **Vite + React + TypeScript**.
 
 ```bash
 npm install
-npx tsc && npx vite build && npx vite build --config vite.config.content.ts
+npm run build
 ```
 
 Output goes to `dist/`.
+
+**Watch mode (development):**
+
+```bash
+npm run dev:ext
+```
+
+Runs both popup and content script builds in watch mode via `concurrently`. Cleans `dist/` on startup, then both watchers rebuild on file changes without wiping each other's output. Reload the extension on `chrome://extensions` to pick up changes.
 
 **Why two Vite configs?** Chrome extension popups support `<script type="module">`, so the popup is built as a standard ES-module React app (`vite.config.ts`). Content scripts cannot use ES modules — they must be a single IIFE file — so the content script has its own build (`vite.config.content.ts`). The second build runs with `emptyOutDir: false` to avoid wiping the popup output.
 
@@ -19,7 +27,7 @@ Output goes to `dist/`.
 npx vitest
 ```
 
-55 tests across readiness logic, sync layers, cache, strategy, fetch, and manifest validation.
+53 tests across readiness logic, sync layers, cache, strategy, fetch, and manifest validation.
 
 ## Loading & Debugging Locally
 
@@ -48,13 +56,17 @@ Communication between the popup and content script is exclusively through `chrom
 ## Three-Layer Sync
 
 1. **Layer 1 — Problem catalog** (`src/sync/problem-sync.ts` → `src/api/leetcode-problems.ts`)
-   Batch-fetches all ~3,800 problems via `problemsetQuestionList` GraphQL. Each problem includes the user's `status` ('ac' | 'notac' | null) because the content script runs authenticated on leetcode.com. TTL: 24 hours.
+   Batch-fetches all ~3,800 problems via `problemsetQuestionList` GraphQL. Each problem includes the user's `status` ('ac' | 'notac' | null) because the content script runs authenticated on leetcode.com. TTL: 24 hours. If a batch fails mid-fetch, partial results are saved so the extension isn't empty.
 
 2. **Layer 2 — Submission cache** (`src/sync/submission-cache.ts` → `src/api/leetcode-graphql.ts`)
-   Per-problem `questionSubmissionList` scan for accepted timestamps. Uses a strategy pattern (`src/sync/scan-strategy.ts`): `TargetedStrategy` only queries `status === 'ac'` problems; `EagerStrategy` queries all attempted. Sequential with 30 ms throttle, checkpoints every 10 problems.
+   Per-problem `questionSubmissionList` scan for accepted timestamps. Uses a `TargetedStrategy` (`src/sync/scan-strategy.ts`) that only queries problems with `status === 'ac'` — problems with no accepted submission are marked unsolved without an API call. Sequential with 350 ms throttle, limit 5 submissions per page (up to 5 pages), checkpoints every 10 problems.
+
+   **Forced refresh** (popup refresh button) re-queries all `ac` problems from scratch, bypassing the cache. This catches timestamp changes from problems solved on other devices.
 
 3. **Layer 3 — Incremental sync** (`src/sync/submission-sync.ts`)
    Fast ~20 recent-accepted check via `recentAcSubmissionList`. Gap detection: if no overlap with the existing cache, marks it stale so Layer 2 re-runs.
+
+Layers 1 and 3 run concurrently. Layer 2 runs after both complete, since it depends on the problem catalog.
 
 ## Key Conventions
 

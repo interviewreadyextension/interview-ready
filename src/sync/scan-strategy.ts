@@ -28,6 +28,7 @@ export interface ScanStrategy {
   partition(
     problems: Problem[],
     existingCache: Record<string, SubmissionCacheEntry>,
+    refreshRequestedAt?: number | null,
   ): PartitionResult;
 }
 
@@ -38,16 +39,19 @@ export interface ScanStrategy {
  * Problems with `status === 'notac'` or `status === null` (never attempted)
  * are marked unsolved without an API call — they have no accepted submission.
  *
- * Fastest strategy — ideal for routine syncs.
+ * When `refreshRequestedAt` is set (forced refresh), entries checked before
+ * that timestamp are treated as stale and re-queried.
  */
 export const TargetedStrategy: ScanStrategy = {
   name: 'targeted',
-  partition(problems, existingCache) {
+  partition(problems, existingCache, refreshRequestedAt) {
     const toQuery: Problem[] = [];
     const toMarkUnsolved: Problem[] = [];
 
     for (const p of problems) {
-      if (existingCache[p.titleSlug]) continue; // already cached
+      const cached = existingCache[p.titleSlug];
+      // Skip if cached AND (no refresh pending OR checked after refresh was requested)
+      if (cached && (!refreshRequestedAt || cached.checkedAt >= refreshRequestedAt)) continue;
 
       if (p.status === 'ac') {
         toQuery.push(p);
@@ -61,25 +65,3 @@ export const TargetedStrategy: ScanStrategy = {
   },
 };
 
-// ─── Eager Strategy ─────────────────────────────────────────────────
-
-/**
- * Queries ALL attempted problems (status !== null) that aren't cached.
- * Catches edge cases where `status` may be stale, at the cost of
- * more API calls.
- */
-export const EagerStrategy: ScanStrategy = {
-  name: 'eager',
-  partition(problems, existingCache) {
-    const toQuery: Problem[] = [];
-
-    for (const p of problems) {
-      if (existingCache[p.titleSlug]) continue;
-      if (p.status !== null) {
-        toQuery.push(p);
-      }
-    }
-
-    return { toQuery, toMarkUnsolved: [] };
-  },
-};
