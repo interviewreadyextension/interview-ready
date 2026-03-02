@@ -1,0 +1,16 @@
+# Debug-only logging function
+# Only logs when update_url is missing from manifest (development mode)
+
+isDebug = ->
+  try
+    not ('update_url' of chrome.runtime.getManifest())
+  catch
+    true  # Assume debug in test/dev environments
+
+export delog = (message) ->
+  if isDebug()
+    console.log message
+
+export delogError = (message, error) ->
+  if isDebug()
+    console.error message, error

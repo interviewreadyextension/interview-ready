@@ -1,0 +1,86 @@
+# Fetch problems from LeetCode's GraphQL API in batches.
+#
+# When run from the content script on leetcode.com, session cookies are
+# included automatically, so the status field on each problem will be
+# populated per-user ('ac', 'notac', or null).
+
+import { delog } from '../shared/logging.rip'
+import { delay } from '../shared/utils.rip'
+import { LEETCODE_GRAPHQL_URL } from './leetcode-graphql.rip'
+
+BATCH_SIZE = 100
+THROTTLE_MS = 200  # ~5 req/sec
+
+buildProblemQuery = (skip, limit) ->
+  JSON.stringify
+    query: """
+      query problemsetQuestionList($categorySlug: String, $limit: Int, $skip: Int, $filters: QuestionListFilterInput) {
+        problemsetQuestionList: questionList(categorySlug: $categorySlug limit: $limit skip: $skip filters: $filters) {
+          total: totalNum
+          questions: data {
+            acRate difficulty frontendQuestionId: questionFrontendId isFavor paidOnly: isPaidOnly status title titleSlug
+            topicTags { name id slug } hasSolution hasVideoSolution
+          }
+        }
+      }
+      """
+    variables: { categorySlug: '', skip, limit, filters: {} }
+
+fetchBatch = (skip, limit) ->
+  delog "[problemBatch] fetching skip=#{skip} limit=#{limit}"
+
+  response = fetch! LEETCODE_GRAPHQL_URL,
+    method: 'POST'
+    credentials: 'include'
+    headers:
+      'content-type': 'application/json'
+      'Referer': 'https://leetcode.com'
+    body: buildProblemQuery skip, limit
+
+  unless response.ok
+    delog "[problemBatch] HTTP error: #{response.status} #{response.statusText}"
+    throw new Error "LeetCode problems batch failed: #{response.status} #{response.statusText}"
+
+  result = response.json!
+  list = result?.data?.problemsetQuestionList
+
+  if not list or not Array.isArray(list.questions)
+    delog "[problemBatch] unexpected response shape: #{JSON.stringify(result).slice(0, 500)}"
+    throw new Error 'Unexpected problemsetQuestionList response from LeetCode'
+
+  delog "[problemBatch] got #{list.questions.length} questions, total=#{list.total}"
+  if list.questions.length > 0
+    q = list.questions[0]
+    delog "[problemBatch] sample: slug=#{q.titleSlug} status=#{q.status} difficulty=#{q.difficulty} tags=#{q.topicTags?.length ?? 0}"
+
+  { total: list.total, questions: list.questions }
+
+# Fetch all problems from LeetCode in batches of 100.
+# ~38 requests for ~3800 problems, throttled to ~5 req/sec (~8 seconds).
+export fetchAllProblemsFromLeetCode = (startOffset = 0, onProgress) ->
+  questions = []
+  offset = startOffset
+  total = null
+
+  while total is null or questions.length < total
+    try
+      batch = fetchBatch! offset, BATCH_SIZE
+    catch err
+      message = if err instanceof Error then err.message else String(err)
+      delog "[problemBatch] Error at offset #{offset}: #{message}. Returning #{questions.length} partial results."
+      return { total: total ?? questions.length, questions, error: message }
+
+    total = batch.total if total is null
+    questions.push ...batch.questions
+    offset += BATCH_SIZE
+
+    delog "Fetched problems #{questions.length}/#{total}"
+    onProgress? { fetched: questions.length, total, phase: 'problems' }
+
+    break if batch.questions.length is 0
+
+    # Throttle to avoid rate limiting
+    if questions.length < total
+      delay! THROTTLE_MS
+
+  { total: total ?? questions.length, questions }

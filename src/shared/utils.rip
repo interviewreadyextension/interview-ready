@@ -1,0 +1,5 @@
+# Shared utility functions used across the extension.
+
+# Simple async delay — resolves after `ms` milliseconds.
+export delay = (ms) ->
+  new Promise (resolve) -> setTimeout resolve, ms

@@ -1,0 +1,33 @@
+# Scan Strategies — decide which problems need per-problem API calls.
+#
+# Each strategy implements partition(), which splits the full problem
+# list into:
+#   - toQuery       — problems we must call questionSubmissionList for
+#   - toMarkUnsolved — problems we can confidently mark as unsolved
+#                      without an API call (saving time)
+
+# Targeted Strategy
+# Only queries problems whose status === 'ac' (LeetCode says accepted).
+# Problems with status === 'notac' or null (never attempted)
+# are marked unsolved without an API call.
+#
+# When refreshRequestedAt is set (forced refresh), entries checked before
+# that timestamp are treated as stale and re-queried.
+export TargetedStrategy =
+  name: 'targeted'
+  partition: (problems, existingCache, refreshRequestedAt) ->
+    toQuery = []
+    toMarkUnsolved = []
+
+    for p in problems
+      cached = existingCache[p.titleSlug]
+      # Skip if cached AND (no refresh pending OR checked after refresh was requested)
+      continue if cached and (not refreshRequestedAt or cached.checkedAt >= refreshRequestedAt)
+
+      if p.status is 'ac'
+        toQuery.push p
+      else
+        # notac or null (never attempted) — no accepted submission exists
+        toMarkUnsolved.push p
+
+    { toQuery, toMarkUnsolved }

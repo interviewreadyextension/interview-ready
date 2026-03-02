@@ -1,0 +1,20 @@
+# Storage migration — clears stale caches when the schema version
+# changes. Runs once at content-script init before any sync begins.
+
+import { STORAGE_KEYS, STORAGE_VERSION } from '../storage/storage-keys.rip'
+import { getStorage, setStorage, removeStorage } from '../storage/storage-service.rip'
+import { delog } from '../shared/logging.rip'
+
+# Migrate storage if needed (clear pre-migration caches)
+export migrateStorageIfNeeded = ->
+  currentVersion = getStorage! STORAGE_KEYS.version
+
+  if currentVersion is STORAGE_VERSION
+    return { migrated: false }
+
+  delog "Storage migration: clearing pre-migration caches (version #{currentVersion ?? 'none'} -> #{STORAGE_VERSION})"
+
+  removeStorage! [STORAGE_KEYS.problems, STORAGE_KEYS.submissions, STORAGE_KEYS.submissionCache]
+  setStorage! STORAGE_KEYS.version, STORAGE_VERSION
+
+  { migrated: true, from: currentVersion ?? null, to: STORAGE_VERSION }

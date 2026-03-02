@@ -1,0 +1,104 @@
+# Problem sync — fetches all LeetCode problems in batches.
+
+import { STORAGE_KEYS } from '../storage/storage-keys.rip'
+import { getStorage, setStorage } from '../storage/storage-service.rip'
+import { fetchAllProblemsFromLeetCode } from '../api/leetcode-problems.rip'
+import { delog } from '../shared/logging.rip'
+
+DEFAULT_PROBLEMS_TTL_MS = 24 * 60 * 60 * 1000  # 24 hours
+SYNC_PROGRESS_KEY = '_syncProgress_problems'
+
+# Prevents a second fetch from starting while one is already running.
+_problemFetchInFlight = false
+
+# Fetch all problems directly from LeetCode with user-specific status.
+export updateProblemsFromLeetCode = (options = {}) ->
+  { fetchTtlMs = DEFAULT_PROBLEMS_TTL_MS } = options
+
+  # In-flight guard
+  if _problemFetchInFlight
+    delog 'Problem fetch already in flight, skipping'
+    return { skipped: true }
+
+  now = Date.now()
+  existing = getStorage! STORAGE_KEYS.problems
+
+  # TTL check
+  if existing?.fetchCompletedAt and now - existing.fetchCompletedAt < fetchTtlMs
+    delog 'Problem fetch skipped (TTL still valid)'
+    return { skipped: true }
+
+  _problemFetchInFlight = true
+
+  # Set semaphore so the popup knows a fetch is in progress
+  setStorage! STORAGE_KEYS.problems, {
+    ...existing
+    data: existing?.data ?? { problemsetQuestionList: { total: 0, questions: [] } }
+    fetchStartedAt: now
+    lastAttemptAt: now
+    lastError: null
+    usingCache: false
+  }
+
+  try
+    reportProgress = (p) ->
+      chrome.storage.local.set { [SYNC_PROGRESS_KEY]: p }
+
+    { total, questions, error: fetchError } = fetchAllProblemsFromLeetCode! 0, reportProgress
+    completedAt = Date.now()
+
+    if fetchError
+      # Partial results — save what we got
+      partialData = if questions.length > 0
+        { problemsetQuestionList: { total, questions } }
+      else
+        existing?.data ?? { problemsetQuestionList: { total: 0, questions: [] } }
+
+      setStorage! STORAGE_KEYS.problems, {
+        data: partialData
+        source: 'leetcode'
+        fetchStartedAt: now
+        fetchCompletedAt: 0
+        lastAttemptAt: now
+        lastError: fetchError
+        timeStamp: completedAt
+        usingCache: true
+      }
+
+      delog "Problem sync partial: #{questions.length}/#{total} fetched. Error: #{fetchError}"
+      chrome.storage.local.remove SYNC_PROGRESS_KEY
+      _problemFetchInFlight = false
+      return { skipped: false, count: questions.length, error: fetchError, usingCache: true }
+
+    setStorage! STORAGE_KEYS.problems, {
+      data: { problemsetQuestionList: { total, questions } }
+      source: 'leetcode'
+      fetchStartedAt: now
+      fetchCompletedAt: completedAt
+      lastAttemptAt: now
+      timeStamp: completedAt
+      lastError: null
+      usingCache: false
+    }
+
+    delog "Problem sync completed: #{questions.length} problems with status"
+    chrome.storage.local.remove SYNC_PROGRESS_KEY
+    _problemFetchInFlight = false
+    { skipped: false, count: questions.length }
+  catch error
+    message = if error instanceof Error then error.message else String(error)
+
+    setStorage! STORAGE_KEYS.problems, {
+      ...existing
+      data: existing?.data ?? { problemsetQuestionList: { total: 0, questions: [] } }
+      fetchStartedAt: 0
+      lastAttemptAt: now
+      lastError: message
+      timeStamp: now
+      usingCache: true
+    }
+
+    delog "Problem sync failed: #{message}. Using cached data."
+    chrome.storage.local.remove SYNC_PROGRESS_KEY
+    _problemFetchInFlight = false
+    { skipped: false, error: message, usingCache: true }

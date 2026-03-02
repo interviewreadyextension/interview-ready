@@ -1,0 +1,132 @@
+# Submission Cache Orchestrator (Layer 2)
+#
+# Builds the per-problem submission cache by calling
+# fetchLatestAcceptedForProblem() for each problem that needs
+# scanning. Writes progress to storage so the popup can show a
+# real-time progress bar.
+
+import { STORAGE_KEYS } from '../storage/storage-keys.rip'
+import { setStorage } from '../storage/storage-service.rip'
+import { fetchLatestAcceptedForProblem } from '../api/leetcode-graphql.rip'
+import { delay } from '../shared/utils.rip'
+import { delog, delogError } from '../shared/logging.rip'
+
+THROTTLE_MS = 350
+CHECKPOINT_INTERVAL = 10  # write to storage every N problems
+SYNC_PROGRESS_KEY = '_syncProgress_submissions'
+
+# Empty cache factory
+export makeEmptyCache = ->
+  entries: {}
+  cacheStatus: 'empty'
+  lastFullScanAt: null
+  lastIncrementalAt: null
+  lastError: null
+
+# Build (or extend) the submission cache by scanning problems that
+# are not yet cached.
+export buildSubmissionCache = (problems, strategy, existingCache, onProgress, signal) ->
+  entries = { ...existingCache.entries }
+  { toQuery, toMarkUnsolved } = strategy.partition problems, entries, existingCache.refreshRequestedAt
+
+  if toQuery.length is 0 and toMarkUnsolved.length is 0
+    delog '[cache] Nothing to scan — cache already covers all problems'
+    return {
+      ...existingCache
+      cacheStatus: 'valid'
+      lastFullScanAt: Date.now()
+      lastError: null
+    }
+
+  delog "[cache] Scan starting: #{toQuery.length} to query, #{toMarkUnsolved.length} to mark unsolved (strategy: #{strategy.name})"
+
+  # Mark unsolved problems immediately (no API call needed)
+  now = Date.now()
+  for p in toMarkUnsolved
+    entries[p.titleSlug] =
+      solved: false
+      latestAcceptedTimestamp: null
+      checkedAt: now
+
+  # Progress includes already-cached entries so resumed scans don't look like restarts.
+  alreadyCached = problems.filter((p) -> p.status is 'ac' and not toQuery.find((q) -> q.titleSlug is p.titleSlug)).length
+  fetched = alreadyCached
+  totalToQuery = toQuery.length + alreadyCached
+
+  reportProgress = (phase) ->
+    progress = { fetched, total: totalToQuery, phase }
+    onProgress? progress
+    chrome.storage.local.set { [SYNC_PROGRESS_KEY]: progress }
+
+  if totalToQuery is 0
+    # Only had unsolved to mark — nothing to query
+    delog '[cache] Only unsolved entries to mark — no API calls needed'
+    completedCache =
+      entries: entries
+      cacheStatus: 'valid'
+      lastFullScanAt: Date.now()
+      lastIncrementalAt: existingCache.lastIncrementalAt
+      lastError: null
+    setStorage! STORAGE_KEYS.submissionCache, completedCache
+    return completedCache
+
+  reportProgress 'scanning'
+
+  # Write the initial state as 'building'
+  cacheInProgress =
+    entries: entries
+    cacheStatus: 'building'
+    refreshRequestedAt: existingCache.refreshRequestedAt
+    lastFullScanAt: existingCache.lastFullScanAt
+    lastIncrementalAt: existingCache.lastIncrementalAt
+    lastError: null
+  setStorage! STORAGE_KEYS.submissionCache, cacheInProgress
+
+  # Sequential scan with throttling
+  for problem, i in toQuery
+    if signal?.aborted
+      delog '[cache] Scan aborted'
+      break
+
+    try
+      result = fetchLatestAcceptedForProblem! problem.titleSlug, 3, signal
+      entries[problem.titleSlug] =
+        solved: result.solved
+        latestAcceptedTimestamp: result.latestAcceptedTimestamp
+        checkedAt: Date.now()
+    catch err
+      delogError "[cache] Failed to scan #{problem.titleSlug}", err
+      entries[problem.titleSlug] =
+        solved: false
+        latestAcceptedTimestamp: null
+        checkedAt: Date.now()
+
+    fetched++
+    reportProgress 'scanning'
+
+    # Checkpoint: write intermediate cache every N problems
+    if (i + 1) % CHECKPOINT_INTERVAL is 0
+      setStorage! STORAGE_KEYS.submissionCache, {
+        ...cacheInProgress
+        entries: { ...entries }
+      }
+      delog "[cache] Checkpoint at #{fetched}/#{totalToQuery}"
+
+    # Throttle between API calls (skip after last item)
+    if i < toQuery.length - 1
+      delay! THROTTLE_MS
+
+  # Final write — clear refreshRequestedAt on successful completion
+  completedCache =
+    entries: entries
+    cacheStatus: if signal?.aborted then existingCache.cacheStatus else 'valid'
+    refreshRequestedAt: if signal?.aborted then existingCache.refreshRequestedAt else null
+    lastFullScanAt: if signal?.aborted then existingCache.lastFullScanAt else Date.now()
+    lastIncrementalAt: existingCache.lastIncrementalAt
+    lastError: null
+
+  setStorage! STORAGE_KEYS.submissionCache, completedCache
+  chrome.storage.local.remove SYNC_PROGRESS_KEY
+
+  delog "[cache] Scan complete: #{fetched}/#{totalToQuery} queried, #{toMarkUnsolved.length} marked unsolved"
+  completedCache

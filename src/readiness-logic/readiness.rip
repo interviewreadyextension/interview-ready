@@ -1,0 +1,206 @@
+# Readiness logic - pure functions that compute interview readiness.
+
+export TARGET_TOPIC_COUNTS = {
+  'hash-table': 20
+  'string': 20
+  'linked-list': 12
+  'array': 24
+  'depth-first-search': 12
+  'breadth-first-search': 10
+  'binary-search': 7
+  'dynamic-programming': 14
+  'sorting': 10
+  'heap-priority-queue': 6
+  'queue': 5
+}
+
+export TARGET_TOPICS = [
+  'hash-table'
+  'string'
+  'linked-list'
+  'array'
+  'depth-first-search'
+  'breadth-first-search'
+  'binary-search'
+  'dynamic-programming'
+  'sorting'
+  'heap-priority-queue'
+  'queue'
+]
+
+UPPER_AC_RATE = 60.0
+LOWER_AC_RATE = 40.0
+
+export buildAcceptedSet = (cache, dateRange) ->
+  accepted = new Set()
+  return accepted unless cache?.entries
+  for slug, entry of cache.entries
+    continue unless entry.solved
+    if dateRange
+      continue if entry.latestAcceptedTimestamp is null
+      continue if entry.latestAcceptedTimestamp < dateRange.startSec or entry.latestAcceptedTimestamp > dateRange.endSec
+    accepted.add slug
+  accepted
+
+isSolved = (slug, status, accepted, allowStatusFallback, cacheEntries) ->
+  accepted.has(slug) or (allowStatusFallback and status is 'ac' and not (slug of cacheEntries))
+
+export randomElementInArray = (arr) ->
+  return null if not arr or arr.length is 0
+  arr[Math.floor(Math.random() * arr.length)]
+
+solvedPoints = (q) ->
+  if q.difficulty is 'Easy' then return 0.4
+  if q.difficulty is 'Hard' then return 2
+  if q.acRate >= UPPER_AC_RATE then return 0.75
+  if q.acRate > LOWER_AC_RATE then return 1
+  1.5
+
+export getReadinessData = (allProblems, submissionCache, dateRange) ->
+  accepted = buildAcceptedSet submissionCache, dateRange
+  allowFallback = not dateRange
+  entries = submissionCache?.entries ?? {}
+  topicPoints = {}
+  for q in allProblems.data.problemsetQuestionList.questions
+    continue unless isSolved(q.titleSlug, q.status, accepted, allowFallback, entries)
+    pts = solvedPoints q
+    for tag in q.topicTags
+      topicPoints[tag.slug] = (topicPoints[tag.slug] ?? 0) + pts
+  data = {}
+  for topic in TARGET_TOPICS
+    normalized = (topicPoints[topic] ?? 0) / TARGET_TOPIC_COUNTS[topic]
+    pct = normalized * 100
+    status = if normalized >= 1.0
+      'ready'
+    else if normalized > 0.7
+      'almost'
+    else
+      'notReady'
+    data[topic] = [status, pct]
+  data
+
+import { recommendedList, recommendedSet } from './recommended-list.rip'
+export { recommendedList, recommendedSet }
+
+classifyProblems = (questions, topic, accepted, isPremium) ->
+  unsolved = { easy: [], medEasy: [], medTarget: [], medHard: [], hard: [], all: [] }
+  solved = { easy: [], medium: [], hard: [], all: [] }
+  for q in questions
+    continue unless q.topicTags.some((t) -> t.slug is topic)
+    continue if q.paidOnly and not isPremium
+    if accepted.has(q.titleSlug)
+      solved.all.push q.titleSlug
+      key = q.difficulty.toLowerCase()
+      solved[key].push q.titleSlug
+    else
+      unsolved.all.push q.titleSlug
+      if q.difficulty is 'Easy'
+        unsolved.easy.push q.titleSlug
+      else if q.difficulty is 'Hard'
+        unsolved.hard.push q.titleSlug
+      else if q.acRate >= UPPER_AC_RATE
+        unsolved.medEasy.push q.titleSlug
+      else if q.acRate > LOWER_AC_RATE
+        unsolved.medTarget.push q.titleSlug
+      else
+        unsolved.medHard.push q.titleSlug
+  { unsolved, solved }
+
+export getNextPracticeProblem = (topic, target, problems, cache, isPremium, dateRange) ->
+  accepted = buildAcceptedSet cache, dateRange
+  { unsolved, solved } = classifyProblems problems, topic, accepted, isPremium
+  switch target
+    when 'easy'
+      return randomElementInArray(unsolved.easy) ?? randomElementInArray(solved.easy)
+    when 'medium'
+      return randomElementInArray(unsolved.medTarget) ?? randomElementInArray(unsolved.medEasy) ?? randomElementInArray(unsolved.medHard) ?? randomElementInArray(solved.medium)
+    when 'hard'
+      return randomElementInArray(unsolved.hard) ?? randomElementInArray(solved.hard)
+    when 'random'
+      return randomElementInArray(unsolved.all) ?? randomElementInArray(solved.all)
+  recUnsolved = {
+    easy: unsolved.easy.filter((s) -> recommendedSet.has(s))
+    medEasy: unsolved.medEasy.filter((s) -> recommendedSet.has(s))
+    medTarget: unsolved.medTarget.filter((s) -> recommendedSet.has(s))
+    medHard: unsolved.medHard.filter((s) -> recommendedSet.has(s))
+    hard: unsolved.hard.filter((s) -> recommendedSet.has(s))
+  }
+  recSolved = solved.all.filter((s) -> recommendedSet.has(s))
+  easyFirst = Math.min(10, recUnsolved.easy.length)
+  beforeTarget = Math.min(15, recUnsolved.easy.length + recUnsolved.medEasy.length)
+  if easyFirst > solved.all.length
+    return randomElementInArray(recUnsolved.easy)
+  if beforeTarget > solved.all.length
+    return randomElementInArray(recUnsolved.medEasy)
+  randomElementInArray(recUnsolved.medTarget) ?? randomElementInArray(recUnsolved.medEasy) ?? randomElementInArray(recUnsolved.medHard) ?? randomElementInArray(recUnsolved.hard) ?? randomElementInArray(recUnsolved.easy) ?? randomElementInArray(recSolved)
+
+export getPracticeProblem = (practiceType, problems, cache, isPremium, dateRange) ->
+  accepted = buildAcceptedSet cache, dateRange
+  allowFallback = not dateRange
+  entries = cache?.entries ?? {}
+  questions = problems.data.problemsetQuestionList.questions
+  switch practiceType
+    when 'suggested'
+      bySlug = new Map(questions.map((q) -> [q.titleSlug, q]))
+      for slug in recommendedList
+        q = bySlug.get(slug)
+        if q and not isSolved(slug, q.status, accepted, allowFallback, entries)
+          return slug
+      readiness = getReadinessData(problems, cache, dateRange)
+      for topic in TARGET_TOPICS
+        if readiness[topic][0] isnt 'ready'
+          return getNextPracticeProblem(topic, 'suggested', questions, cache, isPremium, dateRange)
+    when 'review'
+      solvedList = questions.filter((q) -> isSolved(q.titleSlug, q.status, accepted, allowFallback, entries) and q.topicTags?.some((t) -> TARGET_TOPICS.includes(t.slug))).map((q) -> q.titleSlug)
+      return randomElementInArray(solvedList)
+    when 'random'
+      topic = randomElementInArray([...TARGET_TOPICS]) ?? TARGET_TOPICS[0]
+      return getNextPracticeProblem(topic, 'random', questions, cache, isPremium, dateRange)
+  null
+
+export computeTopicAvailability = (questions, accepted, isPremium, dateRange, cacheEntries) ->
+  avail = {}
+  for topic in TARGET_TOPICS
+    avail[topic] = { suggested: { total: 0, unsolved: 0 }, easy: { total: 0, unsolved: 0 }, medium: { total: 0, unsolved: 0 }, hard: { total: 0, unsolved: 0 }, random: { total: 0, unsolved: 0 } }
+  return avail unless questions
+  allowFallback = not dateRange
+  entries = cacheEntries ?? {}
+  for q in questions
+    continue if q.paidOnly and not isPremium
+    solved = isSolved(q.titleSlug, q.status, accepted, allowFallback, entries)
+    isRecommended = recommendedSet.has(q.titleSlug)
+    for tag in (q.topicTags or [])
+      a = avail[tag.slug]
+      continue unless a
+      diff = q.difficulty?.toLowerCase()
+      if diff is 'easy' or diff is 'medium' or diff is 'hard'
+        a[diff].total++
+        a[diff].unsolved++ unless solved
+      if isRecommended
+        a.suggested.total++
+        a.suggested.unsolved++ unless solved
+      a.random.total++
+      a.random.unsolved++ unless solved
+  avail
+
+export computeBigButtonStates = (questions, accepted, isPremium, dateRange, cacheEntries) ->
+  states = { suggested: { hasUnsolved: false, label: 'Next Suggested Problem', done: 0, total: 0 }, review: { enabled: false, label: 'Review Random Completed' }, random: { hasUnsolved: true, label: 'Solve Random Problem' } }
+  return states unless questions
+  allowFallback = not dateRange
+  entries = cacheEntries ?? {}
+  bySlug = new Map(questions.map((q) -> [q.titleSlug, q]))
+  suggestedTotal = 0
+  suggestedDone = 0
+  hasUnsolved = false
+  for slug in recommendedList
+    q = bySlug.get(slug)
+    continue if not q or (q.paidOnly and not isPremium)
+    suggestedTotal++
+    solved = isSolved(slug, q.status, accepted, allowFallback, entries)
+    if solved then suggestedDone++ else hasUnsolved = true
+  states.suggested.done = suggestedDone
+  states.suggested.total = suggestedTotal
+  states.suggested.hasUnsolved = hasUnsolved
+  states.suggested.label = hasUnsolved ? "Next Suggested Problem" : 'Solve Random Problem'
+  states.review.enabled = questions.some((q) -> not (q.paidOnly and not isPremium) and q.topicTags?.some((t) -> TARGET_TOPICS.includes(t.slug)) and isSolved(q.titleSlug, q.status, accepted, allowFallback, entries))
+  states

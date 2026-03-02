@@ -1,0 +1,92 @@
+# Incremental Submission Sync (Layer 3)
+#
+# Fetches the ~20 most recent accepted submissions via the public
+# recentAcSubmissionList API and reconciles them with the existing
+# submission cache. Fast enough to run on every page load.
+
+import { STORAGE_KEYS } from '../storage/storage-keys.rip'
+import { setStorage } from '../storage/storage-service.rip'
+import { fetchRecentAcceptedSubmissions } from '../api/leetcode-graphql.rip'
+import { delog } from '../shared/logging.rip'
+import { makeEmptyCache } from './submission-cache.rip'
+
+# Shared helpers
+
+export validateChronologicalOrder = (submissions, label = 'submissions') ->
+  unless Array.isArray submissions
+    throw new Error "Expected #{label} to be an array"
+
+  previous = null
+  for sub, index in submissions
+    current = parseTimestamp sub?.timestamp
+    if previous isnt null and current > previous
+      throw new Error "Chronology violation in #{label} at index #{index}: #{current} > #{previous}"
+    previous = current
+
+parseTimestamp = (value) ->
+  parsed = Number value
+  unless Number.isFinite parsed
+    throw new Error "Invalid timestamp: #{value}"
+  parsed
+
+# Incremental sync — fetch the ~20 most recent accepted submissions
+# and reconcile them with the existing submission cache.
+export incrementalSync = (username, existingCache) ->
+  cache = existingCache ?? makeEmptyCache()
+
+  unless username
+    delog '[incremental] No username — skipping'
+    return { gapDetected: false, newCount: 0, cache }
+
+  delog "[incremental] Fetching ~20 recent accepted for #{username}..."
+  recent = fetchRecentAcceptedSubmissions! username, 20
+  delog "[incremental] Got #{recent.length} recent accepted submissions"
+
+  if recent.length is 0
+    return { gapDetected: false, newCount: 0, cache }
+
+  validateChronologicalOrder recent, 'recent accepted submissions'
+
+  entries = { ...cache.entries }
+  cacheIsEmpty = Object.keys(entries).length is 0
+  overlapFound = false
+  newCount = 0
+  now = Date.now()
+
+  for sub in recent
+    existing = entries[sub.titleSlug]
+    ts = Number sub.timestamp
+
+    if existing?.solved
+      # This submission's problem was already in cache — overlap confirmed
+      overlapFound = true
+
+      # Update if this submission is newer than what we have
+      if existing.latestAcceptedTimestamp isnt null and ts > existing.latestAcceptedTimestamp
+        entries[sub.titleSlug] =
+          solved: true
+          latestAcceptedTimestamp: ts
+          checkedAt: now
+        newCount++
+    else
+      # New problem not in cache (or was marked unsolved)
+      entries[sub.titleSlug] =
+        solved: true
+        latestAcceptedTimestamp: ts
+        checkedAt: now
+      newCount++
+
+  # Gap detection logic
+  gapDetected = not cacheIsEmpty and not overlapFound
+
+  updatedCache =
+    entries: entries
+    cacheStatus: if gapDetected then 'stale' else if cache.cacheStatus is 'empty' then 'empty' else cache.cacheStatus
+    lastFullScanAt: cache.lastFullScanAt
+    lastIncrementalAt: now
+    lastError: null
+
+  setStorage! STORAGE_KEYS.submissionCache, updatedCache
+  delog "[incremental] Done: #{newCount} new, gap=#{gapDetected}"
+
+  { gapDetected, newCount, cache: updatedCache }

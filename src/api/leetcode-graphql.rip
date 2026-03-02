@@ -1,0 +1,138 @@
+# Shared LeetCode GraphQL endpoint.
+export LEETCODE_GRAPHQL_URL = 'https://leetcode.com/graphql/'
+
+REQUEST_TIMEOUT_MS = 15000  # 15s per request
+MAX_RETRIES = 3
+RETRY_BASE_MS = 1000  # 1s, 2s, 4s exponential backoff
+
+# Execute a GraphQL POST against LeetCode.
+queryData = (queryBody, signal) ->
+  # Combine caller signal with per-request timeout
+  timeoutController = new AbortController()
+  timer = setTimeout (-> timeoutController.abort()), REQUEST_TIMEOUT_MS
+
+  # If the caller's signal fires, also abort the request
+  onCallerAbort = -> timeoutController.abort()
+  signal?.addEventListener 'abort', onCallerAbort, { once: true }
+
+  try
+    response = fetch! LEETCODE_GRAPHQL_URL,
+      headers:
+        'content-type': 'application/json'
+        'Referer': 'https://leetcode.com'
+      credentials: 'include'
+      body: queryBody
+      method: 'POST'
+      signal: timeoutController.signal
+
+    unless response.ok
+      throw new Error "GraphQL request failed: #{response.status} #{response.statusText}"
+
+    response.json!
+  finally
+    clearTimeout timer
+    signal?.removeEventListener 'abort', onCallerAbort
+
+# Fetch user status (signed in, premium, username)
+export fetchUserStatus = ->
+  query =
+    operationName: 'globalData'
+    query: 'query globalData {userStatus {isSignedIn isPremium username realName avatar}}'
+    variables: {}
+
+  result = queryData! JSON.stringify(query)
+  result.data.userStatus
+
+# Fetch recent accepted submissions for a user (public, no auth needed).
+# Capped at ~20 results by LeetCode — suitable for incremental sync only.
+export fetchRecentAcceptedSubmissions = (username, limit = 20) ->
+  query =
+    operationName: 'getACSubmissions'
+    query: """
+      query getACSubmissions($username: String!, $limit: Int) {
+        recentAcSubmissionList(username: $username, limit: $limit) {
+          titleSlug
+          timestamp
+        }
+      }
+      """
+    variables: { username, limit }
+
+  result = queryData! JSON.stringify(query)
+  list = result.data.recentAcSubmissionList
+
+  unless Array.isArray list
+    throw new Error 'Unexpected recentAcSubmissionList response from LeetCode'
+
+  list.map (item) ->
+    titleSlug: item.titleSlug ?? ''
+    timestamp: String(item.timestamp ?? '')
+
+# Per-problem submission lookup
+
+SUBMISSION_LIST_QUERY = """
+  query submissionList(
+    $offset: Int!
+    $limit: Int!
+    $lastKey: String
+    $questionSlug: String!
+  ) {
+    questionSubmissionList(
+      offset: $offset
+      limit: $limit
+      lastKey: $lastKey
+      questionSlug: $questionSlug
+    ) {
+      lastKey
+      hasNext
+      submissions { timestamp statusDisplay }
+    }
+  }
+  """
+
+# Fetch the latest accepted timestamp for a single problem.
+export fetchLatestAcceptedForProblem = (titleSlug, maxPages = 5, signal) ->
+  offset = 0
+  lastKey = null
+  limit = 5
+
+  for page in [0...maxPages]
+    break if signal?.aborted
+
+    query =
+      operationName: 'submissionList'
+      query: SUBMISSION_LIST_QUERY
+      variables: { questionSlug: titleSlug, offset, limit, lastKey }
+
+    body = JSON.stringify query
+    result = null
+
+    # Retry with exponential backoff for transient failures
+    for attempt in [0...MAX_RETRIES]
+      break if signal?.aborted
+      try
+        result = queryData! body, signal
+        break  # success
+      catch err
+        break if signal?.aborted
+        if attempt < MAX_RETRIES - 1
+          backoff = RETRY_BASE_MS * Math.pow(2, attempt)
+          new Promise (r) -> setTimeout r, backoff
+        else
+          throw err  # exhausted retries
+
+    break unless result
+
+    qsl = result.data.questionSubmissionList
+    break if not qsl or qsl.submissions.length is 0
+
+    # Submissions are returned most-recent-first.
+    for sub in qsl.submissions
+      if sub.statusDisplay is 'Accepted'
+        return { solved: true, latestAcceptedTimestamp: Number(sub.timestamp) }
+
+    break unless qsl.hasNext
+    offset += limit
+    lastKey = qsl.lastKey
+
+  { solved: false, latestAcceptedTimestamp: null }

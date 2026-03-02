@@ -1,6 +1,7 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
+import ripPlugin from './vite-plugin-rip.js';
 
 /**
  * Moves the popup HTML from dist/src/popup/index.html → dist/popup/index.html
@@ -31,11 +32,12 @@ function flattenPopupHtml(): Plugin {
  * and are copied as-is into dist/.
  */
 export default defineConfig(({ command }) => ({
-  plugins: [react(), flattenPopupHtml()],
+  plugins: [ripPlugin(), react(), flattenPopupHtml()],
   resolve: {
     alias: {
       '@': resolve(__dirname, './src'),
     },
+    extensions: ['.rip', '.ts', '.tsx', '.js', '.jsx', '.json'],
   },
   publicDir: 'public',
   build: {
