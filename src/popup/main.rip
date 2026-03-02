@@ -1,0 +1,5 @@
+# Popup entry point — mounts the Rip UI app into the popup's root DOM node.
+
+import { App } from './App.rip'
+
+App.mount '#root'

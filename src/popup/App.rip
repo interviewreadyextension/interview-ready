@@ -1,0 +1,198 @@
+# Popup App — the main readiness dashboard.
+#
+# Reads problem data and submission cache from chrome.storage.local,
+# computes per-topic readiness scores via the readiness logic module,
+# and renders an interactive grid of practice buttons.
+
+import { getReadinessData, buildAcceptedSet, computeTopicAvailability, computeBigButtonStates, getNextPracticeProblem, getPracticeProblem, TARGET_TOPICS } from '../readiness-logic/readiness.rip'
+import { getDateRange } from './components/DateFilter.rip'
+import { delogError } from '../shared/logging.rip'
+
+# ─── Helpers ────────────────────────────────
+
+openProblem = (slug) ->
+  url = "https://leetcode.com/problems/#{slug}"
+  chrome.tabs.create({ url, active: true })
+  window.close()
+
+formatAgo = (ts) ->
+  return null unless ts
+  now = Date.now()
+  diffMin = Math.floor((now - ts) / 60000)
+  return 'just now' if diffMin < 1
+  return "#{diffMin}m ago" if diffMin < 60
+  diffHr = Math.floor(diffMin / 60)
+  return "#{diffHr}h ago" if diffHr < 24
+  new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+
+# ─── Main App Component ─────────────────────
+
+export App = component
+  @userData := null
+  @problemData := null
+  @cacheData := null
+  @loading := true
+  @legendVisible := false
+  @dateFilter := '120d'
+  @refreshing := false
+
+  # Derived data
+  @dateRange ~= getDateRange(@dateFilter)
+  @questions ~= @problemData?.data?.problemsetQuestionList?.questions
+  @isPremium ~= if @userData?.isPremium then true else false
+  @cacheEntries ~= @cacheData?.entries
+  @readinessData ~= if @problemData then getReadinessData(@problemData, @cacheData, @dateRange) else null
+  @recentAccepted ~= buildAcceptedSet(@cacheData, @dateRange)
+  @availability ~= if @questions then computeTopicAvailability(@questions, @recentAccepted, @isPremium, @dateRange, @cacheEntries) else null
+  @bigButtonStates ~= if @questions then computeBigButtonStates(@questions, @recentAccepted, @isPremium, @dateRange, @cacheEntries) else null
+  @sortedTopics ~= if @readinessData then Object.entries(@readinessData).sort((a, b) -> b[1][1] - a[1][1]) else []
+  @totalSolved ~= if @recentAccepted then @recentAccepted.size else 0
+  @totalProblems ~= @problemData?.data?.problemsetQuestionList?.questions?.length ?? 0
+  @problemsSyncLabel ~= formatAgo(@problemData?.fetchCompletedAt)
+  @subsSyncLabel ~= formatAgo(@cacheData?.lastIncrementalAt ?? @cacheData?.lastFullScanAt)
+  @isReady ~= @problemData and @readinessData and @availability and @bigButtonStates
+
+  # Load initial data
+  mounted = ->
+    result = chrome.storage.local.get!(['userDataKey', 'problemsKey', 'submissionCacheKey', 'dateFilterPreference'])
+    @userData = result.userDataKey
+    @problemData = result.problemsKey
+    @cacheData = result.submissionCacheKey
+    @dateFilter = result.dateFilterPreference ?? '120d'
+    @loading = false
+    if result.userDataKey?.isSignedIn
+      chrome.storage.local.set({ modal_opened: Date.now() })
+    chrome.storage.onChanged.addListener (changes) =>
+      @userData = changes.userDataKey.newValue if changes.userDataKey
+      @problemData = changes.problemsKey.newValue if changes.problemsKey
+      @cacheData = changes.submissionCacheKey.newValue if changes.submissionCacheKey
+
+  handleTopicClick = (topic, target) ->
+    return unless @questions
+    try
+      slug = getNextPracticeProblem(topic, target, @questions, @cacheData, @isPremium, @dateRange)
+      openProblem(slug) if slug
+    catch e
+      delogError('Error selecting problem', e)
+
+  handleBigPracticeClick = (practiceType) ->
+    return unless @problemData
+    try
+      slug = getPracticeProblem(practiceType, @problemData, @cacheData, @isPremium, @dateRange)
+      openProblem(slug) if slug
+    catch e
+      delogError('Error selecting practice problem', e)
+
+  handleRefresh = ->
+    return unless window.confirm('Rebuilding the submission cache can take 3–5 minutes. Continue?')
+    @refreshing = true
+    chrome.storage.local.remove(['_syncProgress_problems', '_syncProgress_submissions'])
+    chrome.storage.local.set({ refresh_problems: Date.now(), modal_opened: Date.now() })
+    chrome.tabs.create({ url: 'https://leetcode.com', active: false })
+    setTimeout((=> @refreshing = false), 2000)
+
+  handleLegend = ->
+    @legendVisible = true
+    setTimeout((=> @legendVisible = false), 3000)
+
+  handleDateChange = (e) ->
+    @dateFilter = e.target.value
+    chrome.storage.local.set({ dateFilterPreference: @dateFilter })
+
+  render
+    div.homecontainer
+      if @loading
+        div.loading-container
+          div.loading-text "Loading"
+          div.loading-bar
+            div.loading-bar-fill
+
+      else if not @userData?.isSignedIn
+        div.alert id: 'coldStart'
+          "Please sign in to leetcode to start preparing for your interviews! :)"
+          br
+          br
+          button id: 'signInToLeetCode', @click: (-> chrome.tabs.create({ url: 'https://leetcode.com', active: true })), "Sign in to LeetCode"
+
+      else if not @isReady
+        div.loading-container
+          div.loading-text "Loading problem data…"
+          div.loading-bar
+            div.loading-bar-fill
+
+      else
+        if @legendVisible
+          div id: 'legend'
+            p
+              span.practice-suggested "↗"
+              " - This is the next suggested problem!"
+            p
+              span.practice-easy "↗"
+              " - Random easy!"
+            p
+              span.practice-medium "↗"
+              " - Random medium on a graduated scale by acceptance rate!"
+            p
+              span.practice-hard "↗"
+              " - Random hard!"
+            p
+              span.practice-random "↗"
+              " - Random problem of any difficulty!"
+
+        div.control-row
+          span.control-title "Interview Ready"
+          div.control-right
+            select.date-filter value: @dateFilter, @change: @handleDateChange
+              option value: 'all', "All time"
+              option value: '120d', "Last 120 days"
+              option value: '30d', "Last 30 days"
+              option value: '7d', "Last 7 days"
+            div.control-buttons
+              button.clickable.control-btn @click: @handleLegend, title: "Legend", "?"
+              button.clickable.control-btn @click: @handleRefresh, title: "Refresh", disabled: @refreshing
+                span.icon "↺"
+
+        div.info-summary
+          div.info-left
+            if @userData?.username
+              span.info-stat
+                span.info-value "#{@userData.username}"
+                if @userData?.isPremium
+                  span.info-label " ★"
+            span.info-stat
+              span.info-value "#{@totalSolved}"
+              span.info-label "/#{@totalProblems} solved"
+              if @dateFilter isnt 'all'
+                span.info-label " (#{@dateFilter})"
+          div.info-right
+            if @problemsSyncLabel
+              span "problems #{@problemsSyncLabel}"
+            if @problemsSyncLabel and @subsSyncLabel
+              span " · "
+            if @subsSyncLabel
+              span "subs #{@subsSyncLabel}"
+
+        div id: 'currentReadiness'
+          button.clickable.bigpractice.bigpractice-suggested @click: (-> handleBigPracticeClick 'suggested')
+            div "#{@bigButtonStates.suggested.label}"
+            if @bigButtonStates.suggested.total > 0
+              div.bigpractice-progress-track
+                div.bigpractice-progress-fill style: "width: #{Math.min(100, (@bigButtonStates.suggested.done / @bigButtonStates.suggested.total) * 100)}%"
+
+          div.topic-rows-group
+            for entry in @sortedTopics
+              if @availability[entry[0]]
+                div.topicStatus
+                  button.clickable.practice @click: (-> handleTopicClick entry[0], (if @availability[entry[0]].suggested.unsolved > 0 then 'suggested' else 'random'))
+                    "#{entry[0]} - #{if entry[1][0] is 'ready' then 'Ready ' else ''}#{entry[1][1].toFixed()}%"
+
+          if @bigButtonStates.review.enabled
+            button.clickable.bigpractice @click: (-> handleBigPracticeClick 'review'), "#{@bigButtonStates.review.label}"
+          else
+            button.clickable.bigpractice.disabled disabled: true, title: "No completed problems yet", "#{@bigButtonStates.review.label}"
+
+          button.clickable.bigpractice @click: (-> handleBigPracticeClick 'random'), "Solve Random Problem"
+
+      div.github-link
+        a href: "https://github.com/interviewreadyextension/interview-ready", target: "_blank", rel: "noreferrer"
+          "https://github.com/interviewreadyextension/interview-ready"

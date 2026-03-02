@@ -1,0 +1,10 @@
+# Date filter controls — dropdown, legend button, refresh button.
+# Pure functions exported alongside the component.
+
+export DATE_FILTER_OPTIONS = [{ value: 'all', label: 'All time' }, { value: '120d', label: 'Last 120 days' }, { value: '30d', label: 'Last 30 days' }, { value: '7d', label: 'Last 7 days' }]
+
+export getDateRange = (preset) ->
+  return undefined if preset is 'all'
+  days = if preset is '7d' then 7 else if preset is '30d' then 30 else 120
+  nowSec = Math.floor(Date.now() / 1000)
+  { startSec: nowSec - days * 86400, endSec: nowSec }

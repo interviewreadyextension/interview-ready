@@ -1,0 +1,39 @@
+# TopicRow — shows 5 difficulty arrow buttons plus the topic name/readiness.
+# Separate component to avoid nested for-loops in the parent.
+
+export TopicRow = component
+  accept topic: ''
+  accept status: 'notReady'
+  accept percentage: 0
+  accept availability: null
+
+  render
+    div.topicStatus
+      if @availability
+        if @availability.suggested.total > 0
+          button.clickable.practice.practice-suggested title: "#{@availability.suggested.unsolved} unsolved", @click: (-> @emit 'topicClick', { topic: @topic, target: 'suggested' }), "🡕"
+        else
+          button.clickable.practice.practice-suggested.disabled disabled: true, title: "No suggested problems for this topic", "🡕"
+        if @availability.easy.total > 0
+          button.clickable.practice.practice-easy title: "#{@availability.easy.unsolved} unsolved", @click: (-> @emit 'topicClick', { topic: @topic, target: 'easy' }), "🡕"
+        else
+          button.clickable.practice.practice-easy.disabled disabled: true, title: "No easy problems for this topic", "🡕"
+        if @availability.medium.total > 0
+          button.clickable.practice.practice-medium title: "#{@availability.medium.unsolved} unsolved", @click: (-> @emit 'topicClick', { topic: @topic, target: 'medium' }), "🡕"
+        else
+          button.clickable.practice.practice-medium.disabled disabled: true, title: "No medium problems for this topic", "🡕"
+        if @availability.hard.total > 0
+          button.clickable.practice.practice-hard title: "#{@availability.hard.unsolved} unsolved", @click: (-> @emit 'topicClick', { topic: @topic, target: 'hard' }), "🡕"
+        else
+          button.clickable.practice.practice-hard.disabled disabled: true, title: "No hard problems for this topic", "🡕"
+        if @availability.random.total > 0
+          button.clickable.practice.practice-random title: "#{@availability.random.unsolved} unsolved", @click: (-> @emit 'topicClick', { topic: @topic, target: 'random' }), "🡕"
+        else
+          button.clickable.practice.practice-random.disabled disabled: true, title: "No random problems for this topic", "🡕"
+        button.clickable.practice @click: (-> @emit 'topicClick', { topic: @topic, target: if @availability.suggested.unsolved > 0 then 'suggested' else 'random' })
+          "#{@topic} - #{if @status is 'ready' then 'Ready ' else ''}#{@percentage.toFixed()}%"
+      div.suggested.tooltip.practice-suggested "suggested"
+      div.easy.tooltip.practice-easy "easy"
+      div.medium.tooltip.practice-medium "medium"
+      div.hard.tooltip.practice-hard "hard"
+      div.random.tooltip.practice-random "random"

@@ -1,0 +1,24 @@
+# Legend overlay — explains what each practice arrow colour means.
+# Shown briefly when the user clicks the "?" button.
+
+export Legend = component
+  accept visible: false
+
+  render
+    if @visible
+      div #legend
+        p
+          span.practice-suggested "↗"
+          " - This is the next suggested problem!"
+        p
+          span.practice-easy "↗"
+          " - Random easy!"
+        p
+          span.practice-medium "↗"
+          " - Random medium on a graduated scale by acceptance rate!"
+        p
+          span.practice-hard "↗"
+          " - Random hard!"
+        p
+          span.practice-random "↗"
+          " - Random problem of any difficulty!"

@@ -1,5 +1,5 @@
 import { defineConfig, type Plugin } from 'vite';
-import react from '@vitejs/plugin-react';
+
 import { resolve } from 'path';
 import ripPlugin from './vite-plugin-rip.js';
 
@@ -25,14 +25,14 @@ function flattenPopupHtml(): Plugin {
 }
 
 /**
- * Popup build — React app bundled as ES module.
+ * Popup build — Rip UI app bundled as ES module.
  * Chrome extension popups support <script type="module">.
  *
  * Static assets (manifest.json, images, options page) live in public/
  * and are copied as-is into dist/.
  */
 export default defineConfig(({ command }) => ({
-  plugins: [ripPlugin(), react(), flattenPopupHtml()],
+  plugins: [ripPlugin(), flattenPopupHtml()],
   resolve: {
     alias: {
       '@': resolve(__dirname, './src'),

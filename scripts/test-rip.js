@@ -1,5 +1,5 @@
 import { compileToJS } from 'rip-lang';
-import { readFileSync, readdirSync } from 'fs';
+import { readFileSync, readdirSync, writeFileSync } from 'fs';
 import { join, relative } from 'path';
 
 function findRipFiles(dir) {
@@ -25,11 +25,32 @@ for (const f of files) {
     const rel = relative(process.cwd(), f);
     try {
         const code = readFileSync(f, 'utf8').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-        const js = compileToJS(code, { skipPreamble: true });
-        console.log(`OK ${rel} (${js.split('\n').length} lines)`);
+        const usesComponents = /^export\s+\w+\s*=\s*component\b/m.test(code);
+        const js = compileToJS(code, { skipPreamble: !usesComponents });
+        console.log(`OK ${rel} (${js.split('\n').length} lines)${usesComponents ? ' [component]' : ''}`);
+        if (usesComponents && rel.includes('App.rip')) {
+            writeFileSync('/tmp/app-compiled.js', js);
+        }
         pass++;
     } catch (e) {
         console.log(`FAIL ${rel}: ${e.message}`);
+        // Binary search for the failing line
+        const code = readFileSync(f, 'utf8').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const lines = code.split('\n');
+        let lastGood = 0;
+        for (let i = 1; i <= lines.length; i++) {
+            try {
+                const snippet = lines.slice(0, i).join('\n');
+                const uc = /^export\s+\w+\s*=\s*component\b/m.test(snippet);
+                compileToJS(snippet, { skipPreamble: !uc });
+                lastGood = i;
+            } catch (e2) {
+                break;
+            }
+        }
+        if (lastGood > 0) {
+            console.log(`  Compiles through line ${lastGood}, fails at ${lastGood + 1}: "${lines[lastGood]?.trim()}"`);
+        }
         fail++;
     }
 }
