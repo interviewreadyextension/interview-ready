@@ -59,7 +59,7 @@ export const TopicRow: FC<TopicRowProps> = ({ topic, status, percentage, availab
       })}
       <button
         className={`clickable practice ${status}`}
-        onClick={() => onTopicClick(topic, 'suggested')}
+        onClick={() => onTopicClick(topic, availability.suggested.unsolved > 0 ? 'suggested' : 'random')}
       >
         {topic} - {readinessText}
       </button>
