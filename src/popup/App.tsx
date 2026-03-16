@@ -152,7 +152,7 @@ export const App: FC = () => {
 
     setRefreshing(true);
     // Clear stale progress bars before starting fresh
-    chrome.storage.local.remove(['_syncProgress_problems', '_syncProgress_submissions']);
+    chrome.storage.local.remove(['_syncProgress_problems', '_syncProgress_submissions', '_syncLock']);
     chrome.storage.local.set({
       refresh_problems: Date.now(),
       modal_opened: Date.now(),

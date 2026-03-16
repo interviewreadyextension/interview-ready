@@ -21,7 +21,6 @@ import { fetchLatestAcceptedForProblem } from '../api/leetcode-graphql';
 import type { ScanStrategy } from './scan-strategy';
 import { delay } from '../shared/utils';
 import { delog, delogError } from '../shared/logging';
-import { acquireSyncLock, heartbeatSyncLock, releaseSyncLock } from './sync-lock';
 
 const THROTTLE_MS = 350;
 const CHECKPOINT_INTERVAL = 10; // write to storage every N problems
@@ -69,7 +68,6 @@ export async function buildSubmissionCache(
   existingCache: SubmissionCacheData,
   onProgress?: OnScanProgress,
   signal?: AbortSignal,
-  ownerId?: string,
 ): Promise<SubmissionCacheData> {
   const entries = { ...existingCache.entries };
   const { toQuery, toMarkUnsolved } = strategy.partition(problems, entries, existingCache.refreshRequestedAt);
@@ -122,15 +120,6 @@ export async function buildSubmissionCache(
     return completedCache;
   }
 
-  // Acquire the sync lock (if ownerId provided)
-  if (ownerId) {
-    const acquired = await acquireSyncLock(ownerId);
-    if (!acquired) {
-      delog('[cache] Another tab is scanning — yielding');
-      return existingCache;
-    }
-  }
-
   reportProgress('scanning');
 
   // Write the initial state as 'building'
@@ -151,14 +140,7 @@ export async function buildSubmissionCache(
       break;
     }
 
-    // Update heartbeat before each API call (survives slow retries)
-    if (ownerId) {
-      const stillOwner = await heartbeatSyncLock(ownerId);
-      if (!stillOwner) {
-        delog('[cache] Lost sync lock — another tab took over');
-        break;
-      }
-    }
+
 
     const problem = toQuery[i];
 
@@ -209,11 +191,6 @@ export async function buildSubmissionCache(
 
   await setStorage(STORAGE_KEYS.submissionCache, completedCache);
   chrome.storage.local.remove(SYNC_PROGRESS_KEY);
-
-  // Release the sync lock
-  if (ownerId) {
-    await releaseSyncLock(ownerId);
-  }
 
   delog(`[cache] Scan complete: ${fetched}/${totalToQuery} queried, ${toMarkUnsolved.length} marked unsolved`);
   return completedCache;
