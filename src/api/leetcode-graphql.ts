@@ -13,8 +13,8 @@ import type { UserStatus } from '../types/models';
  */
 export const LEETCODE_GRAPHQL_URL = 'https://leetcode.com/graphql/';
 
-const REQUEST_TIMEOUT_MS = 15_000; // 15s per request
-const MAX_RETRIES = 3;
+export const REQUEST_TIMEOUT_MS = 15_000; // 15s per request
+export const MAX_RETRIES = 3;
 const RETRY_BASE_MS = 1_000; // 1s, 2s, 4s exponential backoff
 
 // ─── Low-level fetch helper ────────────────────────────────────────

@@ -408,7 +408,6 @@ export function getNextPracticeProblem(
     medHard: unsolved.medHard.filter(s => recommendedSet.has(s)),
     hard: unsolved.hard.filter(s => recommendedSet.has(s)),
   };
-  const recSolved = solved.all.filter(s => recommendedSet.has(s));
 
   // Progressive difficulty based on solved count
   const easyFirst = Math.min(10, recUnsolved.easy.length);
@@ -423,7 +422,8 @@ export function getNextPracticeProblem(
     ?? randomElementInArray(recUnsolved.medHard)
     ?? randomElementInArray(recUnsolved.hard)
     ?? randomElementInArray(recUnsolved.easy)
-    ?? randomElementInArray(recSolved);
+    ?? randomElementInArray(unsolved.all)
+    ?? randomElementInArray(solved.all);
 }
 
 /**

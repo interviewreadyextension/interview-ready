@@ -25,6 +25,9 @@ import { buildSubmissionCache, makeEmptyCache } from '../sync/submission-cache';
 import { TargetedStrategy } from '../sync/scan-strategy';
 import type { SubmissionCacheData } from '../types/storage.types';
 
+/** Unique ID for this content script instance (one per tab). */
+const OWNER_ID = crypto.randomUUID();
+
 // ─── Layer 2 trigger ────────────────────────────────────────────────
 
 /**
@@ -54,7 +57,7 @@ async function runFullScanIfNeeded(cache: SubmissionCacheData): Promise<void> {
   delog(`[orchestrator] Starting full scan (status=${cache.cacheStatus}, ${questions.length} problems)`);
 
   try {
-    await buildSubmissionCache(questions, TargetedStrategy, cache);
+    await buildSubmissionCache(questions, TargetedStrategy, cache, undefined, undefined, OWNER_ID);
   } catch (err) {
     delogError('Full scan failed', err);
   }
